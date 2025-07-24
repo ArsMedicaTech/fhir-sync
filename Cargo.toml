@@ -1,0 +1,29 @@
+[package]
+name        = "fhir-sync"
+version     = "0.1.0"
+edition     = "2021"
+
+[dependencies]
+# --- Tokio runtime --------------------------------------------------------
+tokio          = { version = "1.38", features = ["rt-multi-thread", "macros"] }
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# --- gRPC & Protobuf stack -----------------------------------------------
+tonic          = { version = "0.13", features = ["transport", "tls"] }
+prost          = "0.13"
+prost-types    = "0.13"
+tonic-health   = "0.9"              # adds standard gRPC health service
+tonic-reflection = "0.13"           # enables `grpcurl` discovery
+
+# --- FHIR modelling -------------------------------------------------------
+fhirbolt       = { version = "0.4", features = ["r4b"] }  # R4B structs
+serde          = { version = "1.0", features = ["derive"] }
+serde_json     = "1.0"
+
+# --- Databases / adapters (optional) -------------------------------------
+surrealdb      = { version = "1.5", optional = true }
+mysql_async    = { version = "0.33", optional = true }
+
+[features]
+default = ["surrealdb"]
