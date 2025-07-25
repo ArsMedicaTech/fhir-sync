@@ -32,6 +32,7 @@ mysql_async    = { version = "0.33", optional = true }
 anyhow         = "1.0"              # error handling
 axum           = { version = "0.8.4", features = ["json"] }  # HTTP client
 base64ct       = "<1.8.0"
+toml           = "0.8"
 
 # --- OSCAR EMR MariaDB subscription --------------------------------------
 mysql-binlog-connector-rust = "0.3.2"
