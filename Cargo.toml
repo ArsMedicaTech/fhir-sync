@@ -8,7 +8,7 @@ tonic-build    = "0.13"             # build script for generating gRPC code
 
 [dependencies]
 # --- Tokio runtime --------------------------------------------------------
-tokio          = { version = "1.38", features = ["rt-multi-thread", "macros"] }
+tokio          = { version = "1.38", features = ["rt-multi-thread", "macros", "signal"] }
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
