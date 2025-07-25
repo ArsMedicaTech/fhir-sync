@@ -16,7 +16,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tonic          = { version = "0.13", features = ["transport", "tls-webpki-roots"] }
 prost          = "0.13"
 prost-types    = "0.13"
-tonic-health   = "0.9"              # adds standard gRPC health service
+tonic-health   = "0.13"              # adds standard gRPC health service
 tonic-reflection = "0.13"           # enables `grpcurl` discovery
 
 # --- FHIR modelling -------------------------------------------------------
