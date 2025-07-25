@@ -10,7 +10,7 @@ tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # --- gRPC & Protobuf stack -----------------------------------------------
-tonic          = { version = "0.13", features = ["transport", "tls"] }
+tonic          = { version = "0.13", features = ["transport", "tls-webpki-roots"] }
 prost          = "0.13"
 prost-types    = "0.13"
 tonic-health   = "0.9"              # adds standard gRPC health service
