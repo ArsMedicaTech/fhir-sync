@@ -34,7 +34,7 @@ axum           = { version = "0.8.4", features = ["json"] }  # HTTP client
 base64ct       = "<1.8.0"
 
 # --- OSCAR EMR MariaDB subscription --------------------------------------
-mysql_binlog = "0.4"
+mysql-binlog-connector-rust = "0.3.2"
 
 [features]
 default = ["surrealdb"]
