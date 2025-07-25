@@ -3,6 +3,9 @@ name        = "fhir-sync"
 version     = "0.1.0"
 edition     = "2021"
 
+[build-dependencies]
+tonic-build    = "0.13"             # build script for generating gRPC code
+
 [dependencies]
 # --- Tokio runtime --------------------------------------------------------
 tokio          = { version = "1.38", features = ["rt-multi-thread", "macros"] }
