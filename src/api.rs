@@ -23,7 +23,7 @@ pub async fn run_grpc_server(
 
     // start a task that forwards rx → FHIR sync pipeline
     tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
+        while let Some(_ev) = rx.recv().await {
             // convert DTO → google.fhir.r5.core.Patient → send to peer
         }
     });
