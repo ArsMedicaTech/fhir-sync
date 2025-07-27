@@ -4,6 +4,7 @@ use std::fs;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     database: DatabaseConfig,
+    debug: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
