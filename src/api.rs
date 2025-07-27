@@ -16,7 +16,7 @@ pub async fn run_grpc_server(
         .init();
 
     // -------- gRPC health service -----------------
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
         .set_serving::<FhirSyncServer<ServiceImpl>>()
         .await;
