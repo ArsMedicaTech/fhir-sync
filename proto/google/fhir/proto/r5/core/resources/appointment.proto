@@ -17,9 +17,9 @@ syntax = "proto3";
 package google.fhir.r5.core;
 
 import "google/protobuf/any.proto";
-import "proto/google/fhir/proto/annotations.proto";
-import "proto/google/fhir/proto/r5/core/codes.proto";
-import "proto/google/fhir/proto/r5/core/datatypes.proto";
+import "google/fhir/proto/annotations.proto";
+import "google/fhir/proto/r5/core/codes.proto";
+import "google/fhir/proto/r5/core/datatypes.proto";
 
 option java_multiple_files = true;
 option java_package = "com.google.fhir.r5.core";
