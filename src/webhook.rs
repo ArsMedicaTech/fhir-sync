@@ -16,7 +16,7 @@ pub async fn handle_upsert(
     StatusCode::OK
 }
 
-pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/patient", post(handle_upsert))
         .layer(Extension(tx));
