@@ -1,5 +1,7 @@
 FROM rust:1.82-slim
 
+WORKDIR /workspaces/fhir-sync
+
 RUN apt-get update && apt-get install -y git
 
 RUN apt-get update && apt-get install -y protobuf-compiler libprotobuf-dev
