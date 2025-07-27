@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct DomainPatient {
     pub demographic_no: String,
     pub first_name:    Option<String>,
