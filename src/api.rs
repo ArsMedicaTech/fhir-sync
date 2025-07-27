@@ -3,8 +3,9 @@ use crate::Event;
 
 use tracing_subscriber::{fmt, EnvFilter};
 
+use crate::service::fhir_sync::MyFhirSyncService as ServiceImpl;
+
 use crate::proto::fhir_sync::fhir_sync_server::FhirSyncServer;
-use crate::proto::fhir_sync::{ServiceImpl, SomeRequest, SomeResponse};
 
 pub async fn run_grpc_server(
     mut rx: tokio::sync::mpsc::Receiver<Event>,

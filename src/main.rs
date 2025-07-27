@@ -11,6 +11,7 @@ pub mod config;
 pub mod domain;
 pub mod adapters;
 pub mod ext;
+pub mod service;
 
 pub mod proto;
 
