@@ -6,6 +6,7 @@ use mysql_binlog_connector_rust::{
 };
 use tokio::sync::mpsc::Sender;
 
+use crate::adapters::oscar::TableId;
 //use crate::adapters::entities::patient::Patient;
 //use crate::proto::google::fhir::proto::r5::core::Patient as ProtoPatient;
 //use crate::adapters::oscar::OscarPatient;
@@ -56,9 +57,8 @@ pub async fn run_binlog_listener(tx: Sender<Event>) -> Result<()> {
 
 /// Map binlog row → DTO
 async fn handle_write_rows(event: WriteRowsEvent, tx: &Sender<Event>) -> Result<()> {
-    // The `WriteRowsEvent` already carries the table name (if a TableMapEvent was
-    // previously received).  Ignore tables that aren't `demographic`.
-    if event.table_name.as_deref() != Some("demographic") {
+    // The `WriteRowsEvent` carries the table_id; compare it to the expected table_id for "demographic".
+    if event.table_id != TableId::Demographic as u64 {
         return Ok(());
     }
 

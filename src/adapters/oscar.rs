@@ -11,3 +11,9 @@ pub struct OscarPatient {
     pub phone:         Option<String>,
     pub email:         Option<String>,
 }
+
+
+pub enum TableId {
+    Demographic = 123, // <-- set this to the correct value
+    // Add other table ids as needed
+}
