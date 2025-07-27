@@ -1,14 +1,12 @@
 use crate::proto::fhir_sync::{
-    fhir_sync_server::{FhirSync, FhirSyncServer}, // FhirSync is the service trait, FhirSyncServer<T> is the gRPC implementation wrapper
+    // FhirSync is the service trait, FhirSyncServer<T> is the gRPC implementation wrapper
+    fhir_sync_server::FhirSync,
     PatientRef,
     Patient,
     PatientAck,
     ChangeSet,
     Ack,
 };
-
-use tonic::{Request, Response, Status};
-use tokio_stream::wrappers::ReceiverStream;
 
 
 #[derive(Debug, Default)]
