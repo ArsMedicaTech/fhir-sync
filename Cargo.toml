@@ -5,6 +5,7 @@ edition     = "2021"
 
 [build-dependencies]
 tonic-build    = "0.13"             # build script for generating gRPC code
+walkdir        = "2.5"
 
 [dependencies]
 # --- Tokio runtime --------------------------------------------------------
@@ -30,9 +31,10 @@ mysql_async    = { version = "0.33", optional = true }
 
 # --- Other dependencies ---------------------------------------------------
 anyhow         = "1.0"              # error handling
-axum           = { version = "0.8.4", features = ["json"] }  # HTTP client
+axum           = { version = "0.8.4", features = ["json", "macros"] }  # HTTP client
 base64ct       = "<1.8.0"
 toml           = "0.8"
+chrono         = { version = "0.4.41", features = ["serde"] }  # date/time handling
 
 # --- OSCAR EMR MariaDB subscription --------------------------------------
 mysql-binlog-connector-rust = "0.3.2"
