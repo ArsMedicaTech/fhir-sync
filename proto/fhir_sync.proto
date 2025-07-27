@@ -40,7 +40,7 @@ message HumanName {
 service FhirSync {
   rpc UpsertPatient (Patient)          returns (PatientAck);
   rpc GetPatient    (PatientRef)       returns (Patient);
-  rpc StreamChanges (stream ChangeSet) returns (Ack); // bidirectional
+  rpc StreamChanges (stream ChangeSet) returns (stream Ack); // bidirectional
 }
 
 message PatientRef  { string id = 1; }
