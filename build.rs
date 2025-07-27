@@ -2,6 +2,8 @@ use tonic_build;
 use std::fs;
 use std::process::Command;
 use std::env;
+use std::path::PathBuf;
+use walkdir::WalkDir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto/fhir_sync.proto");
@@ -34,12 +36,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Using protoc at: {}", protoc_path);
 
+    let proto_root = PathBuf::from("proto");
+
+    // Recursively collect all .proto files
+    let proto_files: Vec<PathBuf> = WalkDir::new(&proto_root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|f| f.path().extension().map(|e| e == "proto").unwrap_or(false))
+        .map(|f| f.into_path())
+        .collect();
+
+    // Optional: dump what you're compiling
+    for file in &proto_files {
+        println!("Compiling: {}", file.display());
+    }
+
     tonic_build::configure()
         .out_dir("src/proto")          // generated modules live here
         .compile_protos(
-            &["proto/fhir_sync.proto"],
+            &proto_files.iter().map(|p| p.to_str().unwrap()).collect::<Vec<_>>(),
             //&["proto"]
-            &["proto", "proto/google/fhir/proto", "/usr/include"]
+            &["proto", "/usr/include"]
         )?;
     Ok(())
 }
