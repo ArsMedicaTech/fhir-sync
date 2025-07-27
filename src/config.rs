@@ -3,16 +3,16 @@ use std::fs;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    database: DatabaseConfig,
-    debug: Option<bool>,
+    pub database: DatabaseConfig,
+    pub debug: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DatabaseConfig {
-    user: String,
-    password: String,
-    host: String,
-    port: u16,
+    pub user: String,
+    pub password: String,
+    pub host: String,
+    pub port: u16,
 }
 
 pub fn load_config() -> anyhow::Result<Config> {
