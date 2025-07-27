@@ -9,6 +9,7 @@ use tokio::sync::mpsc::Sender;
 use crate::adapters::entities::patient::Patient;
 use crate::{Event};
 use crate::ext::ColumnValueExt;
+use crate::config::load_config;
 
 
 /// Run inside a Tokio task

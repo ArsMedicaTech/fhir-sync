@@ -1,17 +1,19 @@
 use tokio::{select, signal, sync::mpsc};
 use tracing::{info, error};
 
+use crate::domain::patient::DomainPatient;
+
 mod binlog;
 mod webhook;
 mod api;
 
+pub mod config;
 pub mod domain;
 pub mod adapters;
 pub mod ext;
 
-pub mod proto {
-    pub mod fhir_sync;
-}
+pub mod proto;
+
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,7 +48,7 @@ fn handle_exit(name: &str, res: Result<anyhow::Result<()>, tokio::task::JoinErro
 /// Central event enum; extend ad-hoc
 #[derive(Debug)]
 pub enum Event {
-    PatientUpsert(Patient),
+    PatientUpsert(DomainPatient),
     //EncounterUpdate(Encounter),
     // ...
 }

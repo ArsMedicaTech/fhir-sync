@@ -2,19 +2,19 @@ use serde::Deserialize;
 use std::fs;
 
 #[derive(Debug, Deserialize)]
-struct Config {
+pub struct Config {
     database: DatabaseConfig,
 }
 
 #[derive(Debug, Deserialize)]
-struct DatabaseConfig {
+pub struct DatabaseConfig {
     user: String,
     password: String,
     host: String,
     port: u16,
 }
 
-fn load_config() -> anyhow::Result<Config> {
+pub fn load_config() -> anyhow::Result<Config> {
     let toml_str = fs::read_to_string("Config.toml")?;
     let config: Config = toml::from_str(&toml_str)?;
     Ok(config)
