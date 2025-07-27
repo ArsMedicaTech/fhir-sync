@@ -6,7 +6,9 @@ use mysql_binlog_connector_rust::{
 };
 use tokio::sync::mpsc::Sender;
 
-use crate::adapters::entities::patient::Patient;
+//use crate::adapters::entities::patient::Patient;
+//use crate::proto::google::fhir::proto::r5::core::Patient as ProtoPatient;
+use crate::adapters::oscar::OscarPatient;
 use crate::{Event};
 use crate::ext::ColumnValueExt;
 use crate::config::load_config;
@@ -72,15 +74,25 @@ async fn handle_write_rows(event: WriteRowsEvent, tx: &Sender<Event>) -> Result<
         let col4 = &row.column_values[3];
         let col5 = &row.column_values[4];
 
-        let dto = Patient {
+        let dto = OscarPatient {
             //demographic_no: row.column_values[0].as_str().unwrap_or_default().to_owned(),
             // use associated function syntax instead: `ColumnValue::parse()`
-            demographic_no: col1.as_str().unwrap_or_default(),
-            first_name:     col2.as_str().unwrap_or_default(),
-            last_name:      col3.as_str().unwrap_or_default(),
-            birth_date:     col4.as_str().unwrap_or_default(),
-            gender:         col5.as_str().unwrap_or_default(),
+            demographic_no: col1.as_str().unwrap_or_default().to_owned(),
+            first_name:     Some(col2.as_str().unwrap_or_default().to_owned()),
+            last_name:      Some(col3.as_str().unwrap_or_default().to_owned()),
+            //birth_date:     col4.as_str().unwrap_or_default(),
+            date_of_birth:  col4.as_str().map(|s| s.to_owned()), // Option<String>
+            //gender:         col5.as_str().unwrap_or_default(),
+            sex:            col5.as_str().map(|s| s.to_owned()), // Option<String>
             // ... fill the rest
+            email:          Some("email".to_owned()),
+            phone:          Some("phone".to_owned()),
+            location:       Some((
+                "location".to_owned(),
+                "location".to_owned(),
+                "location".to_owned(),
+                "location".to_owned()
+            )),
         };
 
         // push through your mpsc channel
