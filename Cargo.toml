@@ -12,6 +12,7 @@ walkdir        = "2.5"
 tokio          = { version = "1.38", features = ["rt-multi-thread", "macros", "signal"] }
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio-stream   = "0.1.17"
 
 # --- gRPC & Protobuf stack -----------------------------------------------
 tonic          = { version = "0.13", features = ["transport", "tls-webpki-roots"] }
