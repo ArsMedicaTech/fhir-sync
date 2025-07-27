@@ -1,0 +1,14 @@
+{
+  "name": "Rust Dev",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "mounts": ["source=${localWorkspaceFolder}/.cargo,target=/root/.cargo,type=bind,consistency=cached"],
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash",
+    "git.enabled": true
+  },
+  "extensions": [
+    "rust-lang.rust-analyzer"
+  ]
+}

@@ -1,0 +1,9 @@
+.env
+
+target/
+
+Config.toml
+
+src/proto/
+
+.idea/
