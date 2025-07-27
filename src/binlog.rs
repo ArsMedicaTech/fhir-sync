@@ -8,7 +8,8 @@ use tokio::sync::mpsc::Sender;
 
 //use crate::adapters::entities::patient::Patient;
 //use crate::proto::google::fhir::proto::r5::core::Patient as ProtoPatient;
-use crate::adapters::oscar::OscarPatient;
+//use crate::adapters::oscar::OscarPatient;
+use crate::domain::patient::DomainPatient;
 use crate::{Event};
 use crate::ext::ColumnValueExt;
 use crate::config::load_config;
@@ -74,7 +75,7 @@ async fn handle_write_rows(event: WriteRowsEvent, tx: &Sender<Event>) -> Result<
         let col4 = &row.column_values[3];
         let col5 = &row.column_values[4];
 
-        let dto = OscarPatient {
+        let dto = DomainPatient {
             //demographic_no: row.column_values[0].as_str().unwrap_or_default().to_owned(),
             // use associated function syntax instead: `ColumnValue::parse()`
             demographic_no: col1.as_str().unwrap_or_default().to_owned(),
@@ -96,7 +97,7 @@ async fn handle_write_rows(event: WriteRowsEvent, tx: &Sender<Event>) -> Result<
         };
 
         // push through your mpsc channel
-        tx.send(Event::PatientUpsertOscar(dto)).await.ok();
+        tx.send(Event::PatientUpsertAMT(dto)).await.ok();
     }
     Ok(())
 }
