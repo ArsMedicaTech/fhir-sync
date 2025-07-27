@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package sync.v1;
+package fhir_sync.v1;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
 option java_package = "com.arsmedicatech.sync.v1";
-option go_package   = "github.com/arsmedicatech/fhir-sync/proto;syncpb";
+option go_package   = "github.com/arsmedicatech/fhir-sync/proto;fhir_syncpb";
 
 //////////////////////////////
 // Canonical FHIR wrappers  //
