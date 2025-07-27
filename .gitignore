@@ -5,3 +5,5 @@ target/
 Config.toml
 
 src/proto/
+
+.idea/
