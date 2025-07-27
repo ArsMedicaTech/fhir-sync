@@ -50,7 +50,7 @@ impl FhirSync for MyFhirSyncService {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
 
         tokio::spawn(async move {
-            while let Some(Ok(_change)) = stream.message().await {
+            while let Ok(Some(_change)) = stream.message().await {
                 let _ = tx.send(Ok(Ack {
                     message: "got it".into(),
                 }))
