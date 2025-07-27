@@ -1,5 +1,7 @@
-use adapters::entities::patient::Patient as ProtoPatient;
-use domain::DomainPatient;
+use prost::Message as _; // Bring the trait into scope for method resolution
+
+use crate::proto::google::fhir::proto::r5::core::Patient as ProtoPatient;
+use crate::domain::patient::DomainPatient;
 
 fn example() {
     let domain_obj = DomainPatient {
