@@ -96,7 +96,7 @@ async fn handle_write_rows(event: WriteRowsEvent, tx: &Sender<Event>) -> Result<
         };
 
         // push through your mpsc channel
-        tx.send(Event::PatientUpsert(dto)).await.ok();
+        tx.send(Event::PatientUpsertOscar(dto)).await.ok();
     }
     Ok(())
 }
