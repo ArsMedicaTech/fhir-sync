@@ -31,7 +31,7 @@ function Create-OutputDir {
 # Set language-specific output option
 switch ($lang) {
   "python" {
-    $outFlag = "--python_out=/work/gen/python/client"
+    $outFlag = "--python_out=/work/gen/python/client --pyi_out=/work/gen/python/client"
     Create-OutputDir -lang "python"
   }
   "dart" {
