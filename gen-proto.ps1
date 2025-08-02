@@ -17,33 +17,46 @@ $protoFiles = Get-ChildItem -Recurse -Filter *.proto -Path ./proto |
 
 
 # Create output dir if needed
-$outDir = "gen/client"
-if (-not (Test-Path $outDir)) {
-  New-Item -ItemType Directory -Path $outDir | Out-Null
+# reusable function
+function Create-OutputDir {
+  param (
+    [string]$lang
+  )
+  $outDir = "gen/$lang/client"
+  if (-not (Test-Path $outDir)) {
+    New-Item -ItemType Directory -Path $outDir | Out-Null
+  }
 }
 
 # Set language-specific output option
 switch ($lang) {
   "python" {
-    $outFlag = "--python_out=/work/gen/client"
+    $outFlag = "--python_out=/work/gen/python/client"
+    Create-OutputDir -lang "python"
   }
   "dart" {
-    $outFlag = "--dart_out=grpc:/work/gen/client"
+    $outFlag = "--dart_out=grpc:/work/gen/dart/client"
+    Create-OutputDir -lang "dart"
   }
   "go" {
-    $outFlag = "--go_out=/work/gen/client --go-grpc_out=/work/gen/client"
+    $outFlag = "--go_out=/work/gen/go/client --go-grpc_out=/work/gen/go/client"
+    Create-OutputDir -lang "go"
   }
   "js" {
-    $outFlag = "--js_out=import_style=commonjs:/work/gen/client"
+    $outFlag = "--js_out=import_style=commonjs:/work/gen/js/client"
+    Create-OutputDir -lang "js"
   }
   "ts" {
-    $outFlag = "--plugin=protoc-gen-ts=/usr/bin/protoc-gen-ts --ts_out=/work/gen/client"
+    $outFlag = "--plugin=protoc-gen-ts=/usr/bin/protoc-gen-ts --ts_out=/work/gen/ts/client"
+    Create-OutputDir -lang "ts"
   }
   "cpp" {
-    $outFlag = "--cpp_out=/work/gen/client"
+    $outFlag = "--cpp_out=/work/gen/cpp/client"
+    Create-OutputDir -lang "cpp"
   }
   "rust" {
-    $outFlag = "--plugin=protoc-gen-rust=/usr/bin/protoc-gen-rust --rust_out=/work/gen/client"
+    $outFlag = "--plugin=protoc-gen-rust=/usr/bin/protoc-gen-rust --rust_out=/work/gen/rust/client"
+    Create-OutputDir -lang "rust"
   }
   default {
     Write-Error "Unsupported language: $lang"
