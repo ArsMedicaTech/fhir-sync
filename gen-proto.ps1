@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet("python", "dart", "go", "js", "ts", "cpp")]
+  [ValidateSet("python", "dart", "go", "js", "ts", "cpp", "rust")]
   [string]$lang
 )
 
@@ -41,6 +41,9 @@ switch ($lang) {
   }
   "cpp" {
     $outFlag = "--cpp_out=/work/gen/client"
+  }
+  "rust" {
+    $outFlag = "--plugin=protoc-gen-rust=/usr/bin/protoc-gen-rust --rust_out=/work/gen/client"
   }
   default {
     Write-Error "Unsupported language: $lang"
