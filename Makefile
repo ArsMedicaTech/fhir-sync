@@ -1,5 +1,22 @@
 include .env
 
+
+proto-client-python:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang python
+
+proto-client-dart:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang dart
+
+proto-client-rust:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang rust
+
+proto-client-ts:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang ts
+
+proto-client-go:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang go
+
+
 docker-create:
 	aws ecr create-repository --repository-name $(FHIR_SYNC_IMAGE) --region us-east-1 || true
 
