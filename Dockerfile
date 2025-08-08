@@ -23,8 +23,7 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo generate-lockfile
 
 # Compile only dependencies (caches this layer if only src/ changes later)
-RUN cargo build --release && rm -rf src
-
+RUN cargo build --release --target x86_64-unknown-linux-musl && rm -rf src
 
 COPY ./build.rs ./build.rs
 
