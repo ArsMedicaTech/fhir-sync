@@ -10,10 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if debug {
         // Perform debug-specific checks
-        println!("cargo:rerun-if-changed=proto/fhir_sync.proto");
+        println!("cargo:rerun-if-changed=proto/arsmedicatech/fhir_sync.proto");
 
-        if !fs::metadata("proto/fhir_sync.proto").is_ok() {
-            panic!("File not found: proto/fhir_sync.proto");
+        if !fs::metadata("proto/arsmedicatech/fhir_sync.proto").is_ok() {
+            panic!("File not found: proto/arsmedicatech/fhir_sync.proto");
         } else {
             println!("Found proto file, proceeding with build.");
         }
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .arg("--proto_path=proto")
             .arg("--proto_path=.")
             .arg("--descriptor_set_out=descriptor.pb")
-            .arg("proto/fhir_sync.proto")
+            .arg("proto/arsmedicatech/fhir_sync.proto")
             .output()?;  // This gives us access to both stdout and stderr
 
         if !out.status.success() {
