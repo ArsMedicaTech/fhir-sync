@@ -5,17 +5,52 @@ use std::env;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+fn log(msg: &str) {
+    INIT.call_once(|| {
+        let _ = std::fs::create_dir_all("build-logs");
+    });
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("build-logs/build.log")
+        .unwrap();
+
+    println!("cargo:warning={msg}");
+    writeln!(file, "{msg}").unwrap();
+}
+
+fn log_error(msg: &str) {
+    eprintln!("{}", msg);  // still shows in Docker output
+    let _ = std::fs::create_dir_all("build-logs");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("build-logs/build.log")
+    {
+        let _ = writeln!(file, "{}", msg);
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let debug = env::var("DEBUG").unwrap_or_else(|_| "false".to_string()) == "true";
 
+    log(&format!("DEBUG: {}", debug));
+
     if debug {
         // Perform debug-specific checks
-        println!("cargo:rerun-if-changed=proto/arsmedicatech/fhir_sync.proto");
+        log("cargo:rerun-if-changed=proto/arsmedicatech/fhir_sync.proto");
 
         if !fs::metadata("proto/arsmedicatech/fhir_sync.proto").is_ok() {
             panic!("File not found: proto/arsmedicatech/fhir_sync.proto");
         } else {
-            println!("Found proto file, proceeding with build.");
+            log("Found proto file, proceeding with build.");
         }
 
         let out = Command::new(std::env::var("PROTOC").unwrap_or_else(|_| "protoc".into()))
@@ -26,20 +61,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .output()?;  // This gives us access to both stdout and stderr
 
         if !out.status.success() {
-            eprintln!("protoc failed with status: {}", out.status);
-            eprintln!("stdout:\n{}", String::from_utf8_lossy(&out.stdout));
-            eprintln!("stderr:\n{}", String::from_utf8_lossy(&out.stderr));
+            log_error(&format!("protoc failed with status: {}", out.status));
+            log_error(&format!("stdout:\n{}", String::from_utf8_lossy(&out.stdout)));
+            log_error(&format!("stderr:\n{}", String::from_utf8_lossy(&out.stderr)));
             panic!("protoc invocation failed");
         }
 
-        println!("protoc succeeded, proceeding to compile with tonic_build");
+        log("protoc succeeded, proceeding to compile with tonic_build");
     }
 
     // Force set protoc path
     let protoc_path = "/usr/bin/protoc"; // or `which protoc` output
     env::set_var("PROTOC", protoc_path);
 
-    println!("Using protoc at: {}", protoc_path);
+    log(&format!("Using protoc at: {}", protoc_path));
 
     let proto_root = PathBuf::from("proto");
 
@@ -53,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Optional: dump what you're compiling
     for file in &proto_files {
-        println!("Compiling: {}", file.display());
+        log(&format!("Compiling: {}", file.display()));
     }
 
     tonic_build::configure()
