@@ -43,6 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log(&format!("DEBUG: {}", debug));
 
+    // This ensures the proto directory exists (if it doesn't, tonic_build will fail and the error won't be obvious)
+    std::fs::create_dir_all("src/proto")?;
+
     if debug {
         // Perform debug-specific checks
         log("cargo:rerun-if-changed=proto/arsmedicatech/fhir_sync.proto");
