@@ -26,6 +26,8 @@ RUN cargo generate-lockfile
 # Compile only dependencies (caches this layer if only src/ changes later)
 RUN cargo build --release && rm -rf src
 
+RUN cp -r build-logs /tmp/logs || echo "no logs found"
+
 # Copy actual source files and recompile only your crate
 COPY ./src ./src
 COPY ./proto ./proto
@@ -36,6 +38,11 @@ RUN mkdir -p src/proto
 ENV TONIC_BUILD_VERBOSE=1
 
 RUN cargo build --release --target x86_64-unknown-linux-musl
+
+
+# ---- LOG COPY STAGE ----
+FROM busybox AS logs
+COPY --from=builder /tmp/logs /logs
 
 
 FROM scratch
