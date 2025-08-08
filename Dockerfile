@@ -25,7 +25,6 @@ RUN cargo generate-lockfile
 # Compile only dependencies (caches this layer if only src/ changes later)
 RUN cargo build --release && rm -rf src
 
-RUN cp -r build-logs /tmp/logs || echo "no logs found"
 
 COPY ./build.rs ./build.rs
 
@@ -40,6 +39,7 @@ ENV TONIC_BUILD_VERBOSE=1
 
 RUN cargo build --release --target x86_64-unknown-linux-musl
 
+RUN cp -r build-logs /tmp/logs || echo "no logs found"
 
 # ---- LOG COPY STAGE ----
 FROM busybox AS logs
