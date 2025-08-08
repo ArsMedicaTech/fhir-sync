@@ -16,7 +16,6 @@ ENV PATH="/app/target/release:$PATH"
 
 # Cache dependencies
 COPY Cargo.toml ./
-COPY ./build.rs ./build.rs
 
 # Create a dummy src file so `cargo build` doesn't fail
 RUN mkdir src && echo "fn main() {}" > src/main.rs
@@ -27,6 +26,8 @@ RUN cargo generate-lockfile
 RUN cargo build --release && rm -rf src
 
 RUN cp -r build-logs /tmp/logs || echo "no logs found"
+
+COPY ./build.rs ./build.rs
 
 # Copy actual source files and recompile only your crate
 COPY ./src ./src
