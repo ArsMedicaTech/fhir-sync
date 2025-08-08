@@ -45,3 +45,10 @@ k8s-deploy:
 	kubectl create namespace $(NAMESPACE) || true
 	helm upgrade --install $(NAMESPACE) ../k8s --namespace $(NAMESPACE) -f ../k8s/values.yaml
 
+
+test:
+	cargo test
+
+# cargo install cargo-llvm-cov
+test-cov:
+	cargo llvm-cov --html
