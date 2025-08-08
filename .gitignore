@@ -11,3 +11,5 @@ src/proto/
 gen/
 *.profraw
 *.pb
+
+build-logs/
