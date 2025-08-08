@@ -1,0 +1,9 @@
+# Ignore Rust's build artifacts
+target/
+
+# Ignore git history
+.git
+
+# Assorted
+.idea/
+build-logs/
