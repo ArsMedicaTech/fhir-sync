@@ -11,6 +11,7 @@ ENV PATH="/app/target/release:$PATH"
 
 # Cache dependencies
 COPY Cargo.toml ./
+COPY ./build.rs /build.rs
 
 # Create a dummy src file so `cargo build` doesn't fail
 RUN mkdir src && echo "fn main() {}" > src/main.rs
@@ -23,7 +24,6 @@ RUN cargo build --release && rm -rf src
 # Copy actual source files and recompile only your crate
 COPY ./src ./src
 COPY ./proto ./proto
-COPY ./build.rs /build.rs
 
 RUN protoc --proto_path=proto --proto_path=proto/google/fhir/proto --proto_path=/usr/include --descriptor_set_out=/dev/null proto/fhir_sync.proto
 
