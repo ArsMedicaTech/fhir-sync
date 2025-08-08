@@ -16,7 +16,7 @@ ENV PATH="/app/target/release:$PATH"
 
 # Cache dependencies
 COPY Cargo.toml ./
-COPY ./build.rs /build.rs
+COPY ./build.rs ./build.rs
 
 # Create a dummy src file so `cargo build` doesn't fail
 RUN mkdir src && echo "fn main() {}" > src/main.rs
