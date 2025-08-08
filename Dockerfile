@@ -31,8 +31,6 @@ COPY ./build.rs ./build.rs
 COPY ./src ./src
 COPY ./proto ./proto
 
-RUN protoc --proto_path=proto --proto_path=proto/google/fhir/proto --proto_path=/usr/include --descriptor_set_out=/dev/null proto/fhir_sync.proto
-
 RUN mkdir -p src/proto
 ENV TONIC_BUILD_VERBOSE=1
 
