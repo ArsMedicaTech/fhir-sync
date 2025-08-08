@@ -15,6 +15,7 @@ $protoFiles = Get-ChildItem -Recurse -Filter *.proto -Path ./proto |
     $_.FullName.Replace('\', '/').Replace($base, '/work')
   }
 
+Write-Host "Proto files: $protoFiles"
 
 # Create output dir if needed
 # reusable function
@@ -32,6 +33,7 @@ function Create-OutputDir {
 switch ($lang) {
   "python" {
     $outFlag = "--python_out=/work/gen/python/client --pyi_out=/work/gen/python/client"
+    $outFlagService = "--grpc_python_out=/work/gen/python/client"
     Create-OutputDir -lang "python"
   }
   "dart" {
@@ -64,8 +66,17 @@ switch ($lang) {
   }
 }
 
-docker run --rm -v "${PWD}:/work" -w /work rvolosatovs/protoc `
+docker run --rm -v "${PWD}:/work" -w /work protoc `
   --proto_path=/work/proto `
   --proto_path=/usr/include `
   $outFlag `
   $protoFiles
+
+$hostPath = $pwd.Path -replace '\\','/'
+if ($lang -eq "python") {
+  $protoPath = "proto"
+  $outDir = "gen/python/client"
+  $protoFile = "proto/arsmedicatech/fhir_sync.proto"
+
+  docker run --rm -v "${hostPath}:/work" -w /work python:3.11 bash -c "pip install grpcio-tools && python -m grpc_tools.protoc --proto_path=$protoPath --python_out=$outDir --grpc_python_out=$outDir $protoFile"
+}
