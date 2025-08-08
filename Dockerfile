@@ -21,7 +21,9 @@ RUN cargo generate-lockfile
 RUN cargo build --release && rm -rf src
 
 # Copy actual source files and recompile only your crate
-COPY . .
+COPY ./src ./src
+COPY ./proto ./proto
+COPY ./build.rs /build.rs
 
 RUN protoc --proto_path=proto --proto_path=proto/google/fhir/proto --proto_path=/usr/include --descriptor_set_out=/dev/null proto/fhir_sync.proto
 
