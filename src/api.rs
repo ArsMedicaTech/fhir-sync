@@ -28,6 +28,10 @@ pub async fn run_grpc_server(
         }
     });
 
+    // Start separate HTTP server for health checks
+    let health_app = Router::new()
+        .route("/grpc_health_probe", get(health_check));
+
     // expose external API (optional)
     Server::builder()
         //.add_service(MyApiServer::new(MySvc))
