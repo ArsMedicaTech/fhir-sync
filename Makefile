@@ -1,6 +1,10 @@
 include .env
 
 
+proto-docker:
+	docker build -t protoc -f ./Dockerfile.proto .
+
+
 proto-client-python:
 	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang python
 
