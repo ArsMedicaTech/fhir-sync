@@ -15,6 +15,8 @@ ENV PROTOC_INCLUDE=$PROTOBUF_LOCATION/include
 #ENV PATH="/usr/bin:${PATH}"
 ENV PATH="/app/target/release:$PATH"
 
+ENV RUSTFLAGS='-C target-feature=+crt-static'
+
 # Cache dependencies
 COPY Cargo.toml ./
 
