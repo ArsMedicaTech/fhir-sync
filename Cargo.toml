@@ -9,7 +9,7 @@ walkdir        = "2.5"
 
 [dependencies]
 # --- Tokio runtime --------------------------------------------------------
-tokio          = { version = "1.38", features = ["rt-multi-thread", "macros", "signal"] }
+tokio          = { version = "1.38", features = ["full"] }
 tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio-stream   = "0.1.17"
