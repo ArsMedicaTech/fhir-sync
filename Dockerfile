@@ -44,6 +44,12 @@ FROM busybox AS logs
 COPY --from=builder /tmp/logs /logs
 
 
-FROM scratch
+#FROM scratch AS final
+#FROM busybox AS final
+FROM debian:bookworm-slim AS final
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/fhir-sync /fhir-sync
+
+RUN chmod +x /fhir-sync
+
 ENTRYPOINT ["/fhir-sync"]
+#CMD ["sleep", "infinity"]
