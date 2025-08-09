@@ -41,5 +41,8 @@ axum-server   = "0.7.2"              # HTTP server for health checks
 # --- OSCAR EMR MariaDB subscription --------------------------------------
 mysql-binlog-connector-rust = "0.3.2"
 
+# --- Force openssl to be statically linked -------------------------------
+openssl = { version = "0.10", features = ["vendored"] }
+
 [features]
 default = ["surrealdb"]
