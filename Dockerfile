@@ -4,7 +4,7 @@ WORKDIR /app
 # Install MUSL target and other build deps
 RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y make perl
-RUN apt-get update && apt-get install -y musl-tools protobuf-compiler libprotobuf-dev
+RUN apt-get update && apt-get install -y musl-tools
 
 # Install protobuf compiler
 RUN apt-get update && apt-get install -y protobuf-compiler libprotobuf-dev
