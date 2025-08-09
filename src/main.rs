@@ -18,7 +18,9 @@ pub mod proto;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     // Shared channel: listeners push events; API consumes & forwards
     let (tx, rx) = mpsc::channel::<Event>(1024);

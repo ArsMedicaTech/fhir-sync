@@ -12,11 +12,6 @@ use crate::proto::fhir_sync::fhir_sync_server::FhirSyncServer;
 pub async fn run_grpc_server(
     mut rx: tokio::sync::mpsc::Receiver<Event>,
 ) -> anyhow::Result<()> {
-    // -------- logging -----------------------------
-    fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
     // -------- gRPC health service -----------------
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
