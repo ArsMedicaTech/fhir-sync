@@ -1,5 +1,5 @@
 pub mod fhir_sync {
-    include!("proto/fhir_sync.v1.rs");
+    include!("proto/arsmedicatech.fhir_sync.v1.rs");
 }
 
 pub mod google {

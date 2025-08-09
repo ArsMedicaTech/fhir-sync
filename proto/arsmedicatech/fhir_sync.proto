@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package fhir_sync.v1;
+package arsmedicatech.fhir_sync.v1;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";

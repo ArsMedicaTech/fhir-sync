@@ -1,0 +1,16 @@
+FROM rvolosatovs/protoc
+
+# Install Python and grpcio-tools
+RUN apk add --no-cache python3 py3-pip && pip3 install --no-cache-dir grpcio grpcio-tools
+
+# Create a shim script to serve as the gRPC Python plugin
+RUN echo '#!/bin/sh' > /usr/local/bin/protoc-gen-grpc_python && \
+    echo 'exec python3 -m grpc_tools.protoc "$@"' >> /usr/local/bin/protoc-gen-grpc_python && \
+    chmod +x /usr/local/bin/protoc-gen-grpc_python
+
+RUN which protoc-gen-grpc_python
+
+# Add the install directory to PATH (e.g., where pip puts the plugin)
+ENV PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
+ENTRYPOINT ["protoc-wrapper", "-I/usr/include"]

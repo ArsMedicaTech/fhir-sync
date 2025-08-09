@@ -1,5 +1,26 @@
 include .env
 
+
+proto-docker:
+	docker build -t protoc -f ./Dockerfile.proto .
+
+
+proto-client-python:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang python
+
+proto-client-dart:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang dart
+
+proto-client-rust:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang rust
+
+proto-client-ts:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang ts
+
+proto-client-go:
+	powershell -ExecutionPolicy Bypass -File ./gen-proto.ps1 -lang go
+
+
 docker-create:
 	aws ecr create-repository --repository-name $(FHIR_SYNC_IMAGE) --region us-east-1 || true
 
@@ -24,3 +45,10 @@ k8s-deploy:
 	kubectl create namespace $(NAMESPACE) || true
 	helm upgrade --install $(NAMESPACE) ../k8s --namespace $(NAMESPACE) -f ../k8s/values.yaml
 
+
+test:
+	cargo test
+
+# cargo install cargo-llvm-cov
+test-cov:
+	cargo llvm-cov --html

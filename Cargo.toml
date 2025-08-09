@@ -36,9 +36,13 @@ axum           = { version = "0.8.4", features = ["json", "macros"] }  # HTTP cl
 base64ct       = "<1.8.0"
 toml           = "0.8"
 chrono         = { version = "0.4.41", features = ["serde"] }  # date/time handling
+axum-server   = "0.7.2"              # HTTP server for health checks
 
 # --- OSCAR EMR MariaDB subscription --------------------------------------
 mysql-binlog-connector-rust = "0.3.2"
+
+# --- Force openssl to be statically linked -------------------------------
+openssl = { version = "0.10", features = ["vendored"] }
 
 [features]
 default = ["surrealdb"]

@@ -7,3 +7,9 @@ Config.toml
 src/proto/
 
 .idea/
+
+gen/
+*.profraw
+*.pb
+
+build-logs/

@@ -18,18 +18,20 @@ pub mod proto;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     // Shared channel: listeners push events; API consumes & forwards
     let (tx, rx) = mpsc::channel::<Event>(1024);
 
-    let binlog_task   = tokio::spawn(binlog::run_binlog_listener(tx.clone()));
+    //let binlog_task   = tokio::spawn(binlog::run_binlog_listener(tx.clone()));
     let webhook_task  = tokio::spawn(webhook::run_webhook_server(tx.clone()));
     let api_task      = tokio::spawn(api::run_grpc_server(rx));
 
     // graceful shutdown on Ctrl-C
     select! {
-        res = binlog_task   => handle_exit("binlog",   res),
+        //res = binlog_task   => handle_exit("binlog",   res),
         res = webhook_task  => handle_exit("webhook",  res),
         res = api_task      => handle_exit("api",      res),
         _  = signal::ctrl_c() => info!("Ctrl-C received, shutting down"),
