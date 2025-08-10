@@ -18,11 +18,14 @@ pub async fn handle_upsert(
 
 pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>) -> anyhow::Result<()> {
     let app = Router::new()
-        .route("/patient", post(handle_upsert))
+        .route("/webhooks/patient", post(handle_upsert))
         .layer(Extension(tx));
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8081".parse::<SocketAddr>()?)
+    
+    let http_addr = "0.0.0.0:8081".parse::<SocketAddr>()?;
+    let listener = tokio::net::TcpListener::bind(http_addr)
         .await.unwrap();
+
+    println!("HTTP webhooks server listening on {}", http_addr);
 
     axum::serve(listener, app).await.unwrap();
     Ok(())
