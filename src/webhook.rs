@@ -21,7 +21,7 @@ pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>) -> anyhow:
         .route("/patient", post(handle_upsert))
         .layer(Extension(tx));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080".parse::<SocketAddr>()?)
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8081".parse::<SocketAddr>()?)
         .await.unwrap();
 
     axum::serve(listener, app).await.unwrap();
