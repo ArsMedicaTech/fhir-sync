@@ -36,6 +36,9 @@ fhir-sync-docker:
 	docker push $(DOCKER_REGISTRY)/$(FHIR_SYNC_IMAGE):$(FHIR_SYNC_VERSION)
 	kubectl rollout restart deployment $(FHIR_SYNC_DEPLOYMENT) --namespace=$(NAMESPACE)
 
+fhir-sync-docker-local:
+	DOCKER_BUILDKIT=0 docker build -t $(FHIR_SYNC_IMAGE):$(FHIR_SYNC_VERSION) $(FHIR_SYNC_BUILD_ARGS) -f ./Dockerfile .
+
 
 
 k8s-auth:
