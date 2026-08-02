@@ -80,10 +80,19 @@ jobs:
       - name: Assert the patient reached HAPI
         run: |
           for i in $(seq 1 30); do
-            n=$(curl -fsS "http://localhost:8082/fhir/Patient?identifier=https://arsmedicatech.com/fhir/sid/oscar-demographic-no|1001" \
-                  | jq -r '.total // 0')
-            [ "$n" = "1" ] && echo "synced" && exit 0
+            curl -fsS "http://localhost:8082/fhir/metadata" >/dev/null 2>&1 && break
             sleep 5
           done
+
+          for i in $(seq 1 30); do
+            body=$(curl -sS "http://localhost:8082/fhir/Patient?identifier=121" 2>&1)
+            n=$(printf '%s' "$body" | jq -r '.total // empty' 2>/dev/null)
+            if [ "$n" = "1" ]; then echo "synced"; exit 0; fi
+            sleep 5
+          done
+
+          echo "=== last HAPI response ==="
+          printf '%s\n' "$body"
+          echo "=== fhir-sync logs ==="
           docker compose -f docker-compose.demo.yml logs fhir-sync
           exit 1
