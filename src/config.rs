@@ -102,6 +102,8 @@ pub struct SyncConfig {
     pub retry_max_attempts: u32,
     #[serde(default = "default_retry_base_ms")]
     pub retry_base_ms: u64,
+    #[serde(default = "default_dead_letter_path")]
+    pub dead_letter_path: String,
 }
 
 impl Default for SyncConfig {
@@ -110,12 +112,17 @@ impl Default for SyncConfig {
             checkpoint_path: default_checkpoint_path(),
             retry_max_attempts: default_retry_max_attempts(),
             retry_base_ms: default_retry_base_ms(),
+            dead_letter_path: default_dead_letter_path(),
         }
     }
 }
 
 fn default_checkpoint_path() -> String {
     "/var/lib/fhir-sync/checkpoint.json".to_string()
+}
+
+fn default_dead_letter_path() -> String {
+    "/var/lib/fhir-sync/dead_letter.jsonl".to_string()
 }
 
 fn default_retry_max_attempts() -> u32 {
