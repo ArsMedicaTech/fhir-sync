@@ -13,11 +13,6 @@ pub struct OscarPatient {
 }
 
 
-pub enum TableId {
-    Demographic = 123, // <-- set this to the correct value
-    // Add other table ids as needed
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,11 +59,6 @@ mod tests {
         assert_eq!(patient.sex, None);
         assert_eq!(patient.phone, None);
         assert_eq!(patient.email, None);
-    }
-
-    #[test]
-    fn test_table_id_demographic_value() {
-        assert_eq!(TableId::Demographic as i32, 123);
     }
 
     #[test]
