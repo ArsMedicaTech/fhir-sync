@@ -4,6 +4,7 @@ password = "fhirsyncpw"
 host = "127.0.0.1"
 port = 3316
 schema = "oscar"
+server_id = 4321
 
 [server]
 health_port = 8080
