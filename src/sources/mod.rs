@@ -1,4 +1,4 @@
-pub mod mariadb_cdc;
+pub mod mariadb_binlog;
 
 /// Identifies a table referenced by a binlog `TableMapEvent`.
 /// Table ids are per-connection-session and must be resolved dynamically

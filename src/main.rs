@@ -12,6 +12,7 @@ pub mod event;
 pub mod sources;
 pub mod mapping;
 pub mod sink;
+pub mod checkpoint;
 
 pub mod proto;
 
@@ -28,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     // sink is the single consumer (D4). No tokio::broadcast in this phase.
     let (tx, rx) = mpsc::channel::<event::SyncEvent>(1024);
 
-    let source_task = tokio::spawn(sources::mariadb_cdc::run(cfg.clone(), tx.clone()));
+    let source_task = tokio::spawn(sources::mariadb_binlog::run(cfg.clone(), tx.clone()));
     let sink_task   = tokio::spawn(sink::fhir::run(cfg.clone(), rx));
     let webhook_task = tokio::spawn(webhook::run_webhook_server(tx.clone(), cfg.server.webhook_port));
     let api_task      = tokio::spawn(api::run_grpc_server(cfg.server.health_port, cfg.server.grpc_port));
