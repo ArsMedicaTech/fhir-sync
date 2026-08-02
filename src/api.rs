@@ -1,7 +1,6 @@
 use axum::routing::get;
 use axum::Router;
 use tonic::{transport::Server as TonicServer};
-use crate::Event;
 
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -14,7 +13,6 @@ use crate::proto::fhir_sync::fhir_sync_server::FhirSyncServer;
 
 
 pub async fn run_grpc_server(
-    mut rx: tokio::sync::mpsc::Receiver<Event>,
     health_port: u16,
     grpc_port: u16,
 ) -> anyhow::Result<()> {
@@ -25,12 +23,6 @@ pub async fn run_grpc_server(
         .await;
 
     let fhir_service = FhirSyncServer::new(ServiceImpl::default());
-
-    tokio::spawn(async move {
-        while let Some(_ev) = rx.recv().await {
-            // convert DTO → google.fhir.r5.core.Patient → send to peer
-        }
-    });
 
     async fn health_check() -> &'static str {
         "ok"
