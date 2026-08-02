@@ -35,6 +35,66 @@ pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>) -> Result<()> {
     Ok(())
 }
 
+/// Retries `sync_one` with exponential backoff, doubling `retry_base_ms`
+/// each attempt (capped to avoid overflow), up to `retry_max_attempts`.
+async fn sync_with_retry(
+    client: &reqwest::Client,
+    cfg: &Config,
+    token: Option<&str>,
+    event: &SyncEvent,
+) -> Result<()> {
+    let max_attempts = cfg.sync.retry_max_attempts.max(1);
+    let base_ms = cfg.sync.retry_base_ms;
+
+    let mut last_err = None;
+    for attempt in 0..max_attempts {
+        match sync_one(client, &cfg.fhir, token, event).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                warn!(
+                    "fhir sink: attempt {}/{} failed for {}: {e:?}",
+                    attempt + 1,
+                    max_attempts,
+                    event.idempotency_key
+                );
+                last_err = Some(e);
+                if attempt + 1 < max_attempts {
+                    let backoff_ms = base_ms.saturating_mul(1u64 << attempt.min(10));
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown sync failure")))
+}
+
+/// Appends a dead-letter record. Identifiers only — never the full payload
+/// (spec §8: PHI must not land in dead-letter files).
+fn write_dead_letter(path: &str, event: &SyncEvent, err: &anyhow::Error) -> Result<()> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("opening dead letter file {path}"))?;
+
+    let record = serde_json::json!({
+        "idempotency_key": event.idempotency_key,
+        "source": format!("{:?}", event.source),
+        "op": format!("{:?}", event.op),
+        "occurred_at": event.occurred_at.to_rfc3339(),
+        "demographic_no": event.payload.demographic_no,
+        "error": err.to_string(),
+    });
+
+    writeln!(file, "{record}").context("writing dead letter record")?;
+    Ok(())
+}
+
 async fn sync_one(
     client: &reqwest::Client,
     fhir_cfg: &FhirConfig,
