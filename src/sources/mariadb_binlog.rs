@@ -174,14 +174,14 @@ async fn resolve_start_position(cfg: &Config) -> Result<(String, u32)> {
         return Ok((cp.binlog_filename, cp.binlog_position));
     }
 
-    show_master_status(&cfg.database).await
+    capture_binlog_position(&cfg.database).await
 }
 
 /// Reads `SHOW MASTER STATUS` directly, parsing **only columns 0 and 1**
 /// (File, Position). MariaDB's result set has 4 columns, MySQL's has 5
 /// (E5) — never index into column 4, which is the root cause of the
 /// original mis-diagnosed incompatibility (§2.3).
-async fn show_master_status(db: &DatabaseConfig) -> Result<(String, u32)> {
+pub(crate) async fn capture_binlog_position(db: &DatabaseConfig) -> Result<(String, u32)> {
     use mysql_async::prelude::*;
 
     let url = format!(
@@ -299,7 +299,7 @@ fn column_value_to_string(value: &ColumnValue) -> Option<String> {
 /// Resolves `demographic` column name -> ordinal index via
 /// `information_schema.columns` (D3). Self-healing across Oscar schema
 /// variants; never hand-maintain a column list.
-async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap> {
+pub(crate) async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap> {
     use mysql_async::prelude::*;
 
     let url = format!(
