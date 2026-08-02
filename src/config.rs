@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::env;
 use std::fs;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub database: DatabaseConfig,
     #[serde(default)]
@@ -14,7 +14,7 @@ pub struct Config {
     pub debug: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseConfig {
     pub user: String,
     pub password: String,
@@ -28,7 +28,7 @@ fn default_schema() -> String {
     "oscar".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     #[serde(default = "default_health_port")]
     pub health_port: u16,
@@ -60,7 +60,7 @@ fn default_grpc_port() -> u16 {
     50051
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct FhirConfig {
     #[serde(default = "default_fhir_base_url")]
     pub base_url: String,
@@ -87,7 +87,7 @@ fn default_oscar_demographic_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SyncConfig {
     #[serde(default = "default_checkpoint_path")]
     pub checkpoint_path: String,
