@@ -18,12 +18,10 @@ ENV PATH="/app/target/release:$PATH"
 ENV RUSTFLAGS='-C target-feature=+crt-static'
 
 # Cache dependencies
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 
 # Create a dummy src file so `cargo build` doesn't fail
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-
-RUN cargo generate-lockfile
 
 # Compile only dependencies (caches this layer if only src/ changes later)
 RUN cargo build --release --target x86_64-unknown-linux-musl && rm -rf src
