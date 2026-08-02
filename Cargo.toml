@@ -46,6 +46,9 @@ mysql_cdc      = "0.2.1"
 # --- Kept only for src/bin/binlog_probe.rs diagnostic (see PROBE_CHECKLIST.md) --
 mysql-binlog-connector-rust = "0.3.2"
 
+# --- HAPI FHIR sink client --------------------------------------------------
+reqwest        = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # --- Force openssl to be statically linked -------------------------------
 openssl = { version = "0.10", features = ["vendored"] }
 
