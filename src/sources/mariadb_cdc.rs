@@ -130,6 +130,52 @@ fn run_blocking(db: DatabaseConfig, columns: Arc<ColumnMap>, tx: Sender<SyncEven
     Ok(())
 }
 
+/// Maps one row's cells to a `DomainPatient` and sends the resulting
+/// `SyncEvent`. Returns `false` if the sink channel has closed (signal to
+/// stop the listener); `true` otherwise, including when the row is skipped
+/// because it has no `demographic_no`.
+fn emit_row(
+    schema: &str,
+    columns: &ColumnMap,
+    tx: &Sender<SyncEvent>,
+    cells: &[Option<MySqlValue>],
+    position: u32,
+    row_op: RowOp,
+    sync_op: Op,
+) -> bool {
+    let after: Vec<Option<String>> = cells
+        .iter()
+        .map(|c| c.as_ref().map(mysql_value_to_string))
+        .collect();
+
+    let change = RowChange {
+        schema: schema.to_string(),
+        table: DEMOGRAPHIC_TABLE.to_string(),
+        op: row_op,
+        after,
+        position: SourcePosition::FilePos {
+            file: String::new(),
+            pos: position,
+        },
+    };
+
+    let Some(patient) = row_to_domain_patient(&change, columns) else {
+        return true;
+    };
+
+    let idempotency_key = format!("oscar:demographic:{}:{}", patient.demographic_no, position);
+    let sync_event = SyncEvent {
+        source: EventSource::OscarBinlog,
+        op: sync_op,
+        resource_type: ResourceType::Patient,
+        idempotency_key,
+        payload: patient,
+        occurred_at: chrono::Utc::now(),
+    };
+
+    tx.blocking_send(sync_event).is_ok()
+}
+
 fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str) -> bool {
     tables
         .get(&table_id)
