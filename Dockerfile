@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly-slim AS builder
+FROM rust:1.90-slim AS builder
 WORKDIR /app
 
 # Install MUSL target and other build deps
