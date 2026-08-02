@@ -99,7 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile_protos(
             &proto_files.iter().map(|p| p.to_str().unwrap()).collect::<Vec<_>>(),
             //&["proto"]
-            &["proto", "/usr/include"]
+            //&["proto", "/usr/include"]
+            &[".", "/usr/include"]
         )?;
     Ok(())
 }
