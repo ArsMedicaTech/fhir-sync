@@ -18,12 +18,11 @@ ENV PROTOC_INCLUDE=$PROTOBUF_LOCATION/include
 ENV PATH="/app/target/release:$PATH"
 
 # Cache dependencies
-COPY Cargo-copy.toml ./Cargo.toml
+COPY .devcontainer/Cargo-copy.toml ./Cargo.toml
+COPY Cargo.lock ./Cargo.lock
 
 # Create a dummy src file so `cargo build` doesn't fail
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-
-RUN cargo generate-lockfile
 
 # Compile only dependencies (caches this layer if only src/ changes later)
 RUN cargo build --release && rm -rf src

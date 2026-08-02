@@ -1,7 +1,8 @@
 {
   "name": "Rust Dev",
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "context": ".."
   },
   "mounts": ["source=${localWorkspaceFolder}/.cargo,target=/root/.cargo,type=bind,consistency=cached"],
   "settings": {
