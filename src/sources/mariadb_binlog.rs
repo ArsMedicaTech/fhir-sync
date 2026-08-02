@@ -195,7 +195,7 @@ pub(crate) async fn capture_binlog_position(db: &DatabaseConfig) -> Result<(Stri
         .await
         .context("connecting to run SHOW MASTER STATUS")?;
 
-    let row: Option<(String, u32)> = conn
+    let row: Option<mysql_async::Row> = conn
         .query_first("SHOW MASTER STATUS")
         .await
         .context("running SHOW MASTER STATUS")?;
@@ -203,11 +203,25 @@ pub(crate) async fn capture_binlog_position(db: &DatabaseConfig) -> Result<(Stri
     drop(conn);
     let _ = pool.disconnect().await;
 
-    row.ok_or_else(|| {
+    let row = row.ok_or_else(|| {
         anyhow::anyhow!(
             "SHOW MASTER STATUS returned no rows — is binlog enabled on this server? (E2)"
         )
-    })
+    })?;
+
+    // Positional, not tuple-typed: MariaDB returns 4 columns, MySQL 5.
+    // Only columns 0 and 1 are ever read.
+    let file: String = row
+        .get(0)
+        .ok_or_else(|| anyhow::anyhow!("SHOW MASTER STATUS: missing File column"))?;
+    let pos_raw: String = row
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("SHOW MASTER STATUS: missing Position column"))?;
+    let pos: u32 = pos_raw
+        .parse()
+        .with_context(|| format!("SHOW MASTER STATUS: unparseable Position `{pos_raw}`"))?;
+
+    Ok((file, pos))
 }
 
 /// Maps one row's column values to a `DomainPatient` and sends the
