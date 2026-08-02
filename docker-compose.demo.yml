@@ -1,0 +1,73 @@
+version: "3.8"
+
+# Demo harness.
+#
+# One command from a clean checkout:
+#   docker compose -f docker-compose.demo.yml up --build
+#
+# Then, once the stack is up, trigger the demo:
+#   docker compose -f docker-compose.demo.yml exec -T mariadb \
+#     mysql -uoscar -poscarpw oscar < demo/insert_patient.sql
+#
+# ...and check HAPI (never fhir.synapticl.com — this is a throwaway
+# second instance, per spec §6):
+#   curl "http://localhost:8082/fhir/Patient?identifier=https://arsmedicatech.com/fhir/sid/oscar-demographic-no|<demographic_no>"
+#
+# For the --backfill acceptance test (100+ seeded rows -> exactly that many
+# Patients, idempotent on re-run):
+#   docker compose -f docker-compose.demo.yml run --rm fhir-sync --backfill
+
+services:
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MYSQL_ROOT_PASSWORD: supersecretroot
+      MYSQL_DATABASE: oscar
+      MYSQL_USER: oscar
+      MYSQL_PASSWORD: oscarpw
+    # Binlog flags matching the real Oscar stack (E2). server-id=1 here,
+    # distinct from fhir-sync's server_id=4321 (F12).
+    command: >
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --binlog-row-image=FULL
+      --server-id=1
+    volumes:
+      - ./demo/seed_oscar.sql:/docker-entrypoint-initdb.d/seed_oscar.sql:ro
+    ports:
+      - "3316:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-psupersecretroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Second, throwaway HAPI instance for the demo — never fhir.synapticl.com
+  # (spec §6 Testing Notes).
+  hapi:
+    image: hapiproject/hapi:v7.2.0
+    ports:
+      - "8082:8080"
+
+  fhir-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      hapi:
+        condition: service_started
+    environment:
+      CONFIG_PATH: /demo/Config.demo.toml
+      RUST_LOG: info
+    volumes:
+      - ./demo/Config.demo.toml:/demo/Config.demo.toml:ro
+      - fhir-sync-state:/var/lib/fhir-sync
+    ports:
+      - "8090:8080"
+      - "8091:8081"
+      - "50051:50051"
+
+volumes:
+  fhir-sync-state:
