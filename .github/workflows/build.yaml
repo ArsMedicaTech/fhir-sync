@@ -66,9 +66,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve image reference
+        run: echo "FHIR_SYNC_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
       - name: Run demo stack against the image just built
         env:
-          FHIR_SYNC_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          FHIR_SYNC_IMAGE: ${{ env.FHIR_SYNC_IMAGE }}
         run: |
           docker compose -f docker-compose.demo.yml up -d
           docker compose -f docker-compose.demo.yml exec -T mariadb \
