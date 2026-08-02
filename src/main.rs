@@ -22,12 +22,14 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let cfg = config::load_config()?;
+
     // Shared channel: listeners push events; API consumes & forwards
     let (tx, rx) = mpsc::channel::<Event>(1024);
 
     //let binlog_task   = tokio::spawn(binlog::run_binlog_listener(tx.clone()));
-    let webhook_task  = tokio::spawn(webhook::run_webhook_server(tx.clone()));
-    let api_task      = tokio::spawn(api::run_grpc_server(rx));
+    let webhook_task  = tokio::spawn(webhook::run_webhook_server(tx.clone(), cfg.server.webhook_port));
+    let api_task      = tokio::spawn(api::run_grpc_server(rx, cfg.server.health_port, cfg.server.grpc_port));
 
     // graceful shutdown on Ctrl-C
     select! {

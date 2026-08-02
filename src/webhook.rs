@@ -16,15 +16,17 @@ pub async fn handle_upsert(
     StatusCode::OK
 }
 
-pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>) -> anyhow::Result<()> {
+pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/patient", post(handle_upsert))
         .layer(Extension(tx));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080".parse::<SocketAddr>()?)
-        .await.unwrap();
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("bind webhook server");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await.expect("run webhook server");
     Ok(())
 }
 

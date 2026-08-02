@@ -15,6 +15,8 @@ use crate::proto::fhir_sync::fhir_sync_server::FhirSyncServer;
 
 pub async fn run_grpc_server(
     mut rx: tokio::sync::mpsc::Receiver<Event>,
+    health_port: u16,
+    grpc_port: u16,
 ) -> anyhow::Result<()> {
     // -------- Setup (no changes here) -----------------
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -40,15 +42,19 @@ pub async fn run_grpc_server(
     // -------- Server Startup (Updated Logic) -----------------
 
     // 1. Create the HTTP server task using axum::serve
-    let http_addr = "0.0.0.0:8080".parse::<SocketAddr>()?;
+    let http_addr = SocketAddr::from(([0, 0, 0, 0], health_port));
     let http_server = tokio::spawn(async move {
         println!("HTTP health check server listening on {}", http_addr);
-        let listener = TcpListener::bind(http_addr).await.unwrap();
-        axum::serve(listener, http_router.into_make_service()).await.unwrap();
+        let listener = TcpListener::bind(http_addr)
+            .await
+            .expect("bind health check server");
+        axum::serve(listener, http_router.into_make_service())
+            .await
+            .expect("run health check server");
     });
 
     // 2. Create the gRPC server task using tonic's standard .serve()
-    let grpc_addr = "0.0.0.0:50051".parse::<SocketAddr>()?;
+    let grpc_addr = SocketAddr::from(([0, 0, 0, 0], grpc_port));
     let grpc_server = tokio::spawn(async move {
         println!("gRPC server listening on {}", grpc_addr);
         TonicServer::builder()
@@ -56,7 +62,7 @@ pub async fn run_grpc_server(
             .add_service(fhir_service)
             .serve(grpc_addr)
             .await
-            .unwrap();
+            .expect("run gRPC server");
     });
 
     // 3. Wait for either server to exit
