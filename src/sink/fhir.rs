@@ -19,11 +19,12 @@ use tracing::{error, info, warn};
 use crate::config::{Config, FhirConfig};
 use crate::domain::patient::DomainPatient;
 use crate::event::{Op, SyncEvent};
+use crate::metrics::SharedMetrics;
 
 const META_SOURCE: &str = "urn:arsmedicatech:fhir-sync:oscar";
 
 /// Runs the sink to completion (until the channel closes).
-pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>) -> Result<()> {
+pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>, metrics: SharedMetrics) -> Result<()> {
     let client = reqwest::Client::new();
     let token = cfg
         .fhir
@@ -54,6 +55,7 @@ async fn sync_with_retry(
     cfg: &Config,
     token: Option<&str>,
     event: &SyncEvent,
+    metrics: &SharedMetrics,
 ) -> Result<()> {
     let max_attempts = cfg.sync.retry_max_attempts.max(1);
     let base_ms = cfg.sync.retry_base_ms;
@@ -71,6 +73,7 @@ async fn sync_with_retry(
                 );
                 last_err = Some(e);
                 if attempt + 1 < max_attempts {
+                    metrics.inc_retried();
                     let backoff_ms = base_ms.saturating_mul(1u64 << attempt.min(10));
                     tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 }
