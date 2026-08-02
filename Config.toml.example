@@ -13,9 +13,11 @@ grpc_port = 50051
 [fhir]
 base_url = "http://localhost:8082/fhir"
 oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
+oscar_hin_system = "https://arsmedicatech.com/fhir/sid/oscar-hin"
 # token_env = "FHIR_SYNC_TOKEN"
 
 [sync]
 checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
 retry_max_attempts = 5
 retry_base_ms = 500
+dead_letter_path = "/var/lib/fhir-sync/dead_letter.jsonl"
