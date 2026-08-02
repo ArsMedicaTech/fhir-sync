@@ -70,6 +70,7 @@ pub fn row_to_domain_patient(change: &RowChange, columns: &ColumnMap) -> Option<
         sex: lookup(change, columns, "sex").map(str::to_string),
         phone: lookup_any(change, columns, &["phone", "phone1"]).map(str::to_string),
         email: lookup(change, columns, "email").map(str::to_string),
+        hin: lookup(change, columns, "hin").map(str::to_string),
     })
 }
 

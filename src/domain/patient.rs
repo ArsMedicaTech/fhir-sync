@@ -10,6 +10,8 @@ pub struct DomainPatient {
     pub sex:           Option<String>, // "male" | "female" | "other" | ...
     pub phone:         Option<String>,
     pub email:         Option<String>,
+    /// Provincial health insurance number
+    pub hin:           Option<String>,
 }
 
 #[cfg(test)]

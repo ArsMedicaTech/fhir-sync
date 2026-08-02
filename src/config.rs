@@ -66,6 +66,8 @@ pub struct FhirConfig {
     pub base_url: String,
     #[serde(default = "default_oscar_demographic_system")]
     pub oscar_demographic_system: String,
+    #[serde(default = "default_oscar_hin_system")]
+    pub oscar_hin_system: String,
     pub token_env: Option<String>,
 }
 
@@ -74,6 +76,7 @@ impl Default for FhirConfig {
         Self {
             base_url: default_fhir_base_url(),
             oscar_demographic_system: default_oscar_demographic_system(),
+            oscar_hin_system: default_oscar_hin_system(),
             token_env: None,
         }
     }
@@ -85,6 +88,10 @@ fn default_fhir_base_url() -> String {
 
 fn default_oscar_demographic_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".to_string()
+}
+
+fn default_oscar_hin_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-hin".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

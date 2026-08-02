@@ -99,6 +99,15 @@ fn build_patient(payload: &DomainPatient, cfg: &FhirConfig) -> Patient {
         ..Default::default()
     });
 
+    // Provincial PHN, only if this Oscar instance has it.
+    if let Some(hin) = &payload.hin {
+        patient.identifier.push(Identifier {
+            system: Some(cfg.oscar_hin_system.clone().into()),
+            value: Some(hin.clone().into()),
+            ..Default::default()
+        });
+    }
+
     if payload.first_name.is_some() || payload.last_name.is_some() {
         patient.name.push(HumanName {
             family: payload.last_name.clone().map(Into::into),
@@ -156,6 +165,7 @@ mod tests {
             base_url: "http://localhost:8082/fhir".to_string(),
             oscar_demographic_system: "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
                 .to_string(),
+            oscar_hin_system: "https://arsmedicatech.com/fhir/sid/oscar-hin".to_string(),
             token_env: None,
         }
     }
@@ -179,6 +189,7 @@ mod tests {
             sex: Some("F".to_string()),
             phone: None,
             email: None,
+            hin: None,
         };
 
         let patient = build_patient(&payload, &fhir_cfg());

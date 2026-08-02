@@ -13,6 +13,7 @@ fn example() {
         sex: Some("female".into()),
         phone: Some("+1-604-123-4567".into()),
         email: Some("jane.doe@example.com".into()),
+        hin: None,
     };
 
     let proto_msg: ProtoPatient = domain_obj.into();

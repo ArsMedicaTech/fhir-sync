@@ -63,6 +63,7 @@ mod tests {
             sex: Some("male".to_string()),
             phone: Some("+1-555-123-4567".to_string()),
             email: Some("john.doe@example.com".to_string()),
+            hin: Some("1234567890".to_string()),
         }
     }
 
@@ -96,6 +97,7 @@ mod tests {
             sex: None,
             phone: None,
             email: None,
+            hin: None,
         };
         
         let result = handle_upsert_internal(tx, minimal_patient).await;
@@ -130,6 +132,7 @@ mod tests {
             sex: None,
             phone: None,
             email: None,
+            hin: None,
         };
         
         let json = serde_json::to_string(&patient).unwrap();
