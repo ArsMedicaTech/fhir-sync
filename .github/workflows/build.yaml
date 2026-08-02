@@ -59,3 +59,28 @@ jobs:
           # expensive dependency-compile layer reusable across runs.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+  demo-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run demo stack against the image just built
+        env:
+          FHIR_SYNC_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+        run: |
+          docker compose -f docker-compose.demo.yml up -d
+          docker compose -f docker-compose.demo.yml exec -T mariadb \
+            mysql -uoscar -poscarpw oscar < demo/insert_patient.sql
+
+      - name: Assert the patient reached HAPI
+        run: |
+          for i in $(seq 1 30); do
+            n=$(curl -fsS "http://localhost:8082/fhir/Patient?identifier=https://arsmedicatech.com/fhir/sid/oscar-demographic-no|1001" \
+                  | jq -r '.total // 0')
+            [ "$n" = "1" ] && echo "synced" && exit 0
+            sleep 5
+          done
+          docker compose -f docker-compose.demo.yml logs fhir-sync
+          exit 1
