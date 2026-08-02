@@ -22,10 +22,19 @@ pub struct DatabaseConfig {
     pub port: u16,
     #[serde(default = "default_schema")]
     pub schema: String,
+    /// Must be non-zero and distinct from the source server's (Oscar runs
+    /// `--server-id=1`, E2) — zero causes the master to disconnect after
+    /// the last available event (F12).
+    #[serde(default = "default_server_id")]
+    pub server_id: u64,
 }
 
 fn default_schema() -> String {
     "oscar".to_string()
+}
+
+fn default_server_id() -> u64 {
+    4321
 }
 
 #[derive(Debug, Clone, Deserialize)]
