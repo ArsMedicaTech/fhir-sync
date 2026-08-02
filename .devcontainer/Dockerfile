@@ -1,10 +1,15 @@
-FROM rust:1.82-slim
+FROM rust:1.90-slim
 
 WORKDIR /workspaces/fhir-sync
 
-RUN apt-get update && apt-get install -y git
-
-RUN apt-get update && apt-get install -y protobuf-compiler libprotobuf-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git \
+      build-essential \
+      perl \
+      pkg-config \
+      protobuf-compiler \
+      libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PROTOBUF_LOCATION=/usr
 ENV PROTOC=$PROTOBUF_LOCATION/bin/protoc
