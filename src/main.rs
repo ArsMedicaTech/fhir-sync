@@ -49,12 +49,3 @@ fn handle_exit(name: &str, res: Result<anyhow::Result<()>, tokio::task::JoinErro
         Err(e)     => error!("{name} task exited with join error: {e:?}"),
     }
 }
-
-/// Central event enum; extend ad-hoc
-#[derive(Debug)]
-pub enum Event {
-    PatientUpsertAMT(DomainPatient),
-    PatientUpsertOscar(adapters::oscar::OscarPatient),
-    //EncounterUpdate(Encounter),
-    // ...
-}
