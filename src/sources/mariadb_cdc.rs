@@ -68,6 +68,8 @@ fn run_blocking(db: DatabaseConfig, columns: Arc<ColumnMap>, tx: Sender<SyncEven
             }
         };
 
+        let mut channel_closed = false;
+
         match &event {
             BinlogEvent::TableMapEvent(tm) => {
                 tables.insert(
@@ -81,47 +83,57 @@ fn run_blocking(db: DatabaseConfig, columns: Arc<ColumnMap>, tx: Sender<SyncEven
             BinlogEvent::WriteRowsEvent(write) => {
                 if is_target_table(&tables, write.table_id, &db.schema) {
                     for row in &write.rows {
-                        let after: Vec<Option<String>> = row
-                            .cells
-                            .iter()
-                            .map(|c| c.as_ref().map(mysql_value_to_string))
-                            .collect();
-
-                        let change = RowChange {
-                            schema: db.schema.clone(),
-                            table: DEMOGRAPHIC_TABLE.to_string(),
-                            op: RowOp::Insert,
-                            after,
-                            position: SourcePosition::FilePos {
-                                file: String::new(),
-                                pos: header.next_event_position,
-                            },
-                        };
-
-                        if let Some(patient) = row_to_domain_patient(&change, &columns) {
-                            let idempotency_key = format!(
-                                "oscar:demographic:{}:{}",
-                                patient.demographic_no, header.next_event_position
-                            );
-                            let sync_event = SyncEvent {
-                                source: EventSource::OscarBinlog,
-                                op: Op::Upsert,
-                                resource_type: ResourceType::Patient,
-                                idempotency_key,
-                                payload: patient,
-                                occurred_at: chrono::Utc::now(),
-                            };
-
-                            if tx.blocking_send(sync_event).is_err() {
-                                warn!("mariadb_cdc: sink channel closed; stopping listener");
-                                return Ok(());
-                            }
-                        }
+                        channel_closed |= !emit_row(
+                            &db.schema,
+                            &columns,
+                            &tx,
+                            &row.cells,
+                            header.next_event_position,
+                            RowOp::Insert,
+                            Op::Upsert,
+                        );
                     }
                 }
             }
-            // UpdateRows / DeleteRows handling lands in Phase 2 (F6).
+            BinlogEvent::UpdateRowsEvent(update) => {
+                if is_target_table(&tables, update.table_id, &db.schema) {
+                    // After-image only (F6): the sink treats this as a full upsert.
+                    for row in &update.rows {
+                        channel_closed |= !emit_row(
+                            &db.schema,
+                            &columns,
+                            &tx,
+                            &row.after_update.cells,
+                            header.next_event_position,
+                            RowOp::Update,
+                            Op::Upsert,
+                        );
+                    }
+                }
+            }
+            BinlogEvent::DeleteRowsEvent(delete) => {
+                if is_target_table(&tables, delete.table_id, &db.schema) {
+                    // MariaDB is configured with binlog_row_image=FULL (E2), so the
+                    // before-image carries every column, including demographic_no.
+                    for row in &delete.rows {
+                        channel_closed |= !emit_row(
+                            &db.schema,
+                            &columns,
+                            &tx,
+                            &row.cells,
+                            header.next_event_position,
+                            RowOp::Delete,
+                            Op::Delete,
+                        );
+                    }
+                }
+            }
             _ => {}
+        }
+
+        if channel_closed {
+            warn!("mariadb_cdc: sink channel closed; stopping listener");
+            return Ok(());
         }
 
         client.commit(&header, &event);
