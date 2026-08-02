@@ -27,13 +27,14 @@ use crate::checkpoint::{self, Checkpoint};
 use crate::config::{Config, DatabaseConfig};
 use crate::event::{Op, ResourceType, Source as EventSource, SyncEvent};
 use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
+use crate::metrics::SharedMetrics;
 use crate::sources::{RowChange, RowOp, SourcePosition, TableRef};
 
 const DEMOGRAPHIC_TABLE: &str = "demographic";
 
 /// Runs the MariaDB binlog listener to completion (or until the sink
 /// channel closes). Intended to be spawned as a top-level tokio task.
-pub async fn run(cfg: Config, tx: Sender<SyncEvent>) -> Result<()> {
+pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> Result<()> {
     let db = cfg.database.clone();
 
     if db.server_id == 0 {
@@ -94,6 +95,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>) -> Result<()> {
                             &db.schema,
                             &columns,
                             &tx,
+                            &metrics,
                             &row.column_values,
                             RowOp::Insert,
                             Op::Upsert,
@@ -110,6 +112,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>) -> Result<()> {
                             &db.schema,
                             &columns,
                             &tx,
+                            &metrics,
                             &after.column_values,
                             RowOp::Update,
                             Op::Upsert,
@@ -127,6 +130,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>) -> Result<()> {
                             &db.schema,
                             &columns,
                             &tx,
+                            &metrics,
                             &row.column_values,
                             RowOp::Delete,
                             Op::Delete,
@@ -150,6 +154,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>) -> Result<()> {
             binlog_filename: current_filename.clone(),
             binlog_position: header.next_event_position,
         };
+        metrics.set_position(format!("{}:{}", cp.binlog_filename, cp.binlog_position));
         if let Err(e) = checkpoint::save(&cfg.sync.checkpoint_path, &cp) {
             warn!("mariadb_binlog: failed to persist checkpoint: {e:?}");
         }
@@ -213,6 +218,7 @@ async fn emit_row(
     schema: &str,
     columns: &ColumnMap,
     tx: &Sender<SyncEvent>,
+    metrics: &SharedMetrics,
     values: &[ColumnValue],
     row_op: RowOp,
     sync_op: Op,
@@ -250,6 +256,7 @@ async fn emit_row(
         occurred_at: chrono::Utc::now(),
     };
 
+    metrics.inc_received();
     tx.send(sync_event).await.is_ok()
 }
 
