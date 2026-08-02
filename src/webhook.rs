@@ -1,6 +1,6 @@
 use axum::{Json, Router, routing::post};
-use crate::{Event};
 use crate::domain::patient::DomainPatient;
+use crate::event::{Op, ResourceType, Source, SyncEvent};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::extract::Extension;
@@ -8,15 +8,33 @@ use std::net::SocketAddr;
 
 #[axum::debug_handler]
 pub async fn handle_upsert(
-    Extension(_tx): Extension<tokio::sync::mpsc::Sender<Event>>,
+    Extension(tx): Extension<tokio::sync::mpsc::Sender<SyncEvent>>,
     Json(dto): Json<DomainPatient>,
 ) -> impl IntoResponse + Send {
-    println!("Got patient: {:?}", dto);
-    // You can use tx.send(...) here if needed
-    StatusCode::OK
+    handle_upsert_internal(tx, dto).await
 }
 
-pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<Event>, port: u16) -> anyhow::Result<()> {
+async fn handle_upsert_internal(
+    tx: tokio::sync::mpsc::Sender<SyncEvent>,
+    patient: DomainPatient,
+) -> StatusCode {
+    let idempotency_key = format!("webhook:demographic:{}", patient.demographic_no);
+    let event = SyncEvent {
+        source: Source::Webhook,
+        op: Op::Upsert,
+        resource_type: ResourceType::Patient,
+        idempotency_key,
+        payload: patient,
+        occurred_at: chrono::Utc::now(),
+    };
+
+    match tx.send(event).await {
+        Ok(()) => StatusCode::OK,
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
+pub async fn run_webhook_server(tx: tokio::sync::mpsc::Sender<SyncEvent>, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/patient", post(handle_upsert))
         .layer(Extension(tx));
@@ -51,7 +69,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_upsert_function_logic() {
         // Test the actual function logic, not the HTTP layer
-        let (tx, _rx) = tokio::sync::mpsc::channel::<Event>(1);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<SyncEvent>(1);
         let test_patient = create_test_patient();
         
         // Call the function directly (simulating what the HTTP handler does)
@@ -60,14 +78,15 @@ mod tests {
         // Verify the function returns success
         assert_eq!(result, StatusCode::OK);
         
-        // Optionally verify that an event was sent (if you want to test that)
-        // let event = rx.try_recv().unwrap();
-        // assert!(matches!(event, Event::PatientUpserted(_)));
+        // Verify a SyncEvent was actually sent
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.source, Source::Webhook);
+        assert_eq!(event.op, Op::Upsert);
     }
 
     #[tokio::test]
     async fn test_handle_upsert_with_minimal_patient() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<Event>(1);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SyncEvent>(1);
         let minimal_patient = DomainPatient {
             demographic_no: "67890".to_string(),
             first_name: None,
@@ -121,15 +140,4 @@ mod tests {
         assert_eq!(deserialized.last_name, None);
     }
 
-    // Helper function to test the actual logic without HTTP overhead
-    async fn handle_upsert_internal(
-        _tx: tokio::sync::mpsc::Sender<Event>,
-        patient: DomainPatient,
-    ) -> StatusCode {
-        // This simulates what the HTTP handler does internally
-        println!("Got patient: {:?}", patient);
-        // You can add actual business logic here
-        // tx.send(Event::PatientUpserted(patient)).await.unwrap();
-        StatusCode::OK
-    }
 }
