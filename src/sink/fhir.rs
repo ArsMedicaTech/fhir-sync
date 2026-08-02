@@ -1,12 +1,20 @@
 //! Sink task: consumes `SyncEvent`s and conditionally upserts a FHIR R4B
 //! `Patient` into HAPI (D5). Owns the `rx` end of the channel — there is
 //! exactly one consumer (D4).
+//!
+//! Failed syncs are retried with exponential backoff
+//! (`cfg.sync.retry_max_attempts` / `retry_base_ms`); on exhaustion the
+//! event is appended to `cfg.sync.dead_letter_path` and the stream keeps
+//! running — one bad record must never take down the process.
+
+use std::io::Write;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use fhirbolt::model::r4b::resources::Patient;
 use fhirbolt::model::r4b::types::{Address, ContactPoint, HumanName, Identifier, Meta};
 use tokio::sync::mpsc::Receiver;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::config::{Config, FhirConfig};
 use crate::domain::patient::DomainPatient;
@@ -25,10 +33,14 @@ pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>) -> Result<()> {
 
     while let Some(event) = rx.recv().await {
         let key = event.idempotency_key.clone();
-        if let Err(e) = sync_one(&client, &cfg.fhir, token.as_deref(), &event).await {
-            // Phase 2 (F6/dead-letter) will add retry + backoff here.
-            // For now: log and keep the stream alive (never crash on one bad record).
-            error!("fhir sink: failed to sync {key}: {e:?}");
+
+        if let Err(e) = sync_with_retry(&client, &cfg, token.as_deref(), &event).await {
+            error!("fhir sink: exhausted retries for {key}: {e:?}");
+            if let Err(dl_err) = write_dead_letter(&cfg.sync.dead_letter_path, &event, &e) {
+                // PHI note (spec §8): never let a dead-letter write failure crash the
+                // stream either — log identifier only and move on.
+                error!("fhir sink: failed to write dead letter for {key}: {dl_err:?}");
+            }
         }
     }
 
