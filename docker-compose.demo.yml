@@ -56,11 +56,11 @@ services:
       start_period: 60s
 
   fhir-sync:
-    build:
-      #context: .
-      #dockerfile: Dockerfile
-      # Using CI build for compute constraint reasons.
-      image: ${FHIR_SYNC_IMAGE:-ghcr.io/arsmedicatech/fhir-sync:main}
+    #build:
+    #  #context: .
+    #  #dockerfile: Dockerfile
+    #Using CI build for compute constraint reasons.
+    image: ${FHIR_SYNC_IMAGE:-ghcr.io/arsmedicatech/fhir-sync:main}
     depends_on:
       mariadb:
         condition: service_healthy
