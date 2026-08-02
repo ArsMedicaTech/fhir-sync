@@ -28,7 +28,9 @@ serde_json     = "1.0"
 
 # --- Databases / adapters (optional) -------------------------------------
 surrealdb      = { version = "1.5", optional = true }
-mysql_async    = { version = "0.33", optional = true }
+
+# --- OSCAR EMR MariaDB column resolution (information_schema queries) ----
+mysql_async    = "0.33"
 
 # --- Other dependencies ---------------------------------------------------
 anyhow         = "1.0"              # error handling
@@ -38,7 +40,10 @@ toml           = "0.8"
 chrono         = { version = "0.4.41", features = ["serde"] }  # date/time handling
 axum-server   = "0.7.2"              # HTTP server for health checks
 
-# --- OSCAR EMR MariaDB subscription --------------------------------------
+# --- OSCAR EMR MariaDB CDC source (D7) -------------------------------------
+mysql_cdc      = "0.2.1"
+
+# --- Kept only for src/bin/binlog_probe.rs diagnostic (see PROBE_CHECKLIST.md) --
 mysql-binlog-connector-rust = "0.3.2"
 
 # --- Force openssl to be statically linked -------------------------------
