@@ -20,10 +20,29 @@ async fn main() -> anyhow::Result<()> {
     let url = env::var("PROBE_URL")
         .unwrap_or_else(|_| "mysql://fhirsync:fhirsyncpw@127.0.0.1:3316".to_string());
 
-    println!("connecting to {url}");
+    let server_id: u64 = env::var("PROBE_SERVER_ID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4321);
+
+    // Empty filename => crate calls fetch_binlog_info() (SHOW MASTER STATUS),
+    // which panics on MariaDB. Setting it explicitly skips that path entirely.
+    let binlog_filename = env::var("PROBE_BINLOG_FILE").unwrap_or_default();
+    let binlog_position: u32 = env::var("PROBE_BINLOG_POS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
+
+    println!(
+        "connecting to {url} (server_id={server_id}, file={:?}, pos={binlog_position})",
+        binlog_filename
+    );
 
     let mut client = BinlogClient {
         url,
+        server_id,
+        binlog_filename,
+        binlog_position,
         ..Default::default()
     };
 
