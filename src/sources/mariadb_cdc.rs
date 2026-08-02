@@ -273,3 +273,65 @@ async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap> {
 
     Ok(map)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mysql_cdc::events::row_events::mysql_value::{Date, DateTime, Time};
+
+    #[test]
+    fn is_target_table_matches_schema_and_table() {
+        let mut tables = HashMap::new();
+        tables.insert(
+            42,
+            TableRef {
+                schema: "oscar".to_string(),
+                table: "demographic".to_string(),
+            },
+        );
+
+        assert!(is_target_table(&tables, 42, "oscar"));
+        assert!(!is_target_table(&tables, 42, "other_schema"));
+        assert!(!is_target_table(&tables, 999, "oscar")); // unknown table_id (F2)
+    }
+
+    #[test]
+    fn mysql_value_to_string_formats_temporal_types() {
+        assert_eq!(
+            mysql_value_to_string(&MySqlValue::Date(Date {
+                year: 1990,
+                month: 3,
+                day: 5,
+            })),
+            "1990-03-05"
+        );
+
+        assert_eq!(
+            mysql_value_to_string(&MySqlValue::Time(Time {
+                hour: 9,
+                minute: 5,
+                second: 1,
+                millis: 0,
+            })),
+            "09:05:01"
+        );
+
+        assert_eq!(
+            mysql_value_to_string(&MySqlValue::DateTime(DateTime {
+                year: 2024,
+                month: 12,
+                day: 1,
+                hour: 8,
+                minute: 30,
+                second: 0,
+                millis: 0,
+            })),
+            "2024-12-01T08:30:00"
+        );
+
+        assert_eq!(
+            mysql_value_to_string(&MySqlValue::String("hello".to_string())),
+            "hello"
+        );
+    }
+}
