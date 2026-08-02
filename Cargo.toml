@@ -40,11 +40,8 @@ toml           = "0.8"
 chrono         = { version = "0.4.41", features = ["serde"] }  # date/time handling
 axum-server   = "0.7.2"              # HTTP server for health checks
 
-# --- OSCAR EMR MariaDB CDC source (D7) -------------------------------------
-mysql_cdc      = "0.2.1"
-
-# --- Kept only for src/bin/binlog_probe.rs diagnostic (see PROBE_CHECKLIST.md) --
-mysql-binlog-connector-rust = "0.3.2"
+# --- OSCAR EMR MariaDB CDC source (D7, settled in v3 spec revision) -------
+mysql-binlog-connector-rust = "=0.3.3"
 
 # --- HAPI FHIR sink client --------------------------------------------------
 reqwest        = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
