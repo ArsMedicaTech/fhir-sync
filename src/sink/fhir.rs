@@ -35,12 +35,16 @@ pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>, metrics: SharedMetric
     while let Some(event) = rx.recv().await {
         let key = event.idempotency_key.clone();
 
-        if let Err(e) = sync_with_retry(&client, &cfg, token.as_deref(), &event).await {
-            error!("fhir sink: exhausted retries for {key}: {e:?}");
-            if let Err(dl_err) = write_dead_letter(&cfg.sync.dead_letter_path, &event, &e) {
-                // PHI note (spec §8): never let a dead-letter write failure crash the
-                // stream either — log identifier only and move on.
-                error!("fhir sink: failed to write dead letter for {key}: {dl_err:?}");
+        match sync_with_retry(&client, &cfg, token.as_deref(), &event, &metrics).await {
+            Ok(()) => metrics.inc_synced(),
+            Err(e) => {
+                error!("fhir sink: exhausted retries for {key}: {e:?}");
+                metrics.inc_dead_lettered();
+                if let Err(dl_err) = write_dead_letter(&cfg.sync.dead_letter_path, &event, &e) {
+                    // PHI note (spec §8): never let a dead-letter write failure crash the
+                    // stream either — log identifier only and move on.
+                    error!("fhir sink: failed to write dead letter for {key}: {dl_err:?}");
+                }
             }
         }
     }
