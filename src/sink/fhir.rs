@@ -267,6 +267,68 @@ mod tests {
         let patient = build_patient(&payload, &fhir_cfg());
         assert!(patient.telecom.is_empty());
         assert!(patient.address.is_empty());
+        assert_eq!(patient.identifier.len(), 1);
         assert_eq!(patient.identifier[0].value, Some("123".to_string().into()));
+    }
+
+    #[test]
+    fn build_patient_adds_hin_identifier_when_present() {
+        let payload = DomainPatient {
+            demographic_no: "123".to_string(),
+            first_name: None,
+            last_name: None,
+            date_of_birth: None,
+            location: None,
+            sex: None,
+            phone: None,
+            email: None,
+            hin: Some("9999888877".to_string()),
+        };
+
+        let patient = build_patient(&payload, &fhir_cfg());
+        assert_eq!(patient.identifier.len(), 2);
+        assert_eq!(
+            patient.identifier[1].value,
+            Some("9999888877".to_string().into())
+        );
+    }
+
+    #[test]
+    fn dead_letter_never_contains_full_payload() {
+        use crate::event::{ResourceType, Source};
+
+        let dir = std::env::temp_dir().join(format!("fhir-sync-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dead_letter.jsonl");
+        let path_str = path.to_str().unwrap();
+
+        let event = SyncEvent {
+            source: Source::OscarBinlog,
+            op: Op::Upsert,
+            resource_type: ResourceType::Patient,
+            idempotency_key: "oscar:demographic:123:456".to_string(),
+            payload: DomainPatient {
+                demographic_no: "123".to_string(),
+                first_name: Some("Alice".to_string()),
+                last_name: Some("Smith".to_string()),
+                date_of_birth: None,
+                location: None,
+                sex: None,
+                phone: None,
+                email: Some("alice@example.com".to_string()),
+                hin: None,
+            },
+            occurred_at: chrono::Utc::now(),
+        };
+
+        write_dead_letter(path_str, &event, &anyhow::anyhow!("HAPI unreachable")).unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("\"123\""));
+        assert!(contents.contains("HAPI unreachable"));
+        assert!(!contents.contains("Alice"));
+        assert!(!contents.contains("alice@example.com"));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
