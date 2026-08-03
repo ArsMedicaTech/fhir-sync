@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         res = sink_task     => handle_exit("sink",     res),
         res = webhook_task  => handle_exit("webhook",  res),
         res = api_task      => handle_exit("api",      res),
-        res = replication_task => handle_exit("replication", res)
+        res = replication_task => handle_exit("replication", res),
         _  = signal::ctrl_c() => info!("Ctrl-C received, shutting down"),
     };
 
