@@ -12,6 +12,8 @@ pub struct Config {
     #[serde(default)]
     pub sync: SyncConfig,
     pub debug: Option<bool>,
+    #[serde(default)]
+    pub replication: ReplicationConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,6 +144,156 @@ fn default_retry_base_ms() -> u64 {
     500
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplicationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_state_dir")]
+    pub state_dir: String,
+    #[serde(default = "default_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+    #[serde(default)]
+    pub doorbell_port: u16,
+    #[serde(default)]
+    pub nodes: Vec<ReplicationNode>,
+    #[serde(default)]
+    pub links: Vec<ReplicationLink>,
+}
+
+impl Default for ReplicationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            state_dir: default_state_dir(),
+            poll_interval_ms: default_poll_interval_ms(),
+            page_size: default_page_size(),
+            doorbell_port: default_doorbell_port(),
+            nodes: Vec::new(),
+            links: Vec::new(),
+        }
+    }
+}
+
+fn default_state_dir() -> String {
+    "/var/lib/fhir-sync".to_string()
+}
+
+fn default_poll_interval_ms() -> u64 {
+    5000
+}
+
+fn default_page_size() -> usize {
+    100
+}
+
+fn default_doorbell_port() -> u16 {
+    8082
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplicationNode {
+    pub name: String,
+    pub base_url: String,
+    pub token_env: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplicationLink {
+    pub name: String,
+    pub source: String,
+    pub target: String,
+    #[serde(default = "default_link_mode")]
+    pub mode: ReplicationMode,
+    pub resources: Vec<String>,
+    #[serde(default = "default_link_provenance")]
+    pub provenance: bool,
+    #[serde(default = "default_link_conflict_policy")]
+    pub conflict_policy: ConflictPolicy,
+    pub federate_identifier_system: Option<String>,
+    #[serde(default)]
+    pub subscription_doorbell: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplicationMode {
+    Mirror,
+    Federate,
+}
+
+impl Default for ReplicationMode {
+    fn default() -> Self {
+        ReplicationMode::Mirror
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictPolicy {
+    DeadLetter,
+    SourceWins,
+}
+
+impl Default for ConflictPolicy {
+    fn default() -> Self {
+        ConflictPolicy::DeadLetter
+    }
+}
+
+fn default_link_mode() -> ReplicationMode {
+    ReplicationMode::Mirror
+}
+
+fn default_link_provenance() -> bool {
+    true
+}
+
+fn default_link_conflict_policy() -> ConflictPolicy {
+    ConflictPolicy::DeadLetter
+}
+
+/// Validates the replication configuration (node references, duplicates,
+/// federate requirements, forbidden resource types). Fatal on error.
+pub fn validate_replication(cfg: &ReplicationConfig) -> anyhow::Result<()> {
+    if !cfg.enabled {
+        return Ok(());
+    }
+
+    let mut names = std::collections::HashSet::new();
+    for node in &cfg.nodes {
+        if !names.insert(node.name.clone()) {
+            anyhow::bail!("replication node name '{}' is duplicated", node.name);
+        }
+    }
+
+    let mut link_names = std::collections::HashSet::new();
+    for link in &cfg.links {
+        if !link_names.insert(link.name.clone()) {
+            anyhow::bail!("replication link name '{}' is duplicated", link.name);
+        }
+        if !names.contains(&link.source) {
+            anyhow::bail!("replication link '{}' references unknown source node '{}'", link.name, link.source);
+        }
+        if !names.contains(&link.target) {
+            anyhow::bail!("replication link '{}' references unknown target node '{}'", link.name, link.target);
+        }
+        if matches!(link.mode, ReplicationMode::Federate) && link.federate_identifier_system.is_none() {
+            anyhow::bail!("replication link '{}' uses federate mode but has no federate_identifier_system", link.name);
+        }
+        if link
+            .resources
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case("Provenance") || r.eq_ignore_ascii_case("AuditEvent"))
+        {
+            anyhow::bail!("replication link '{}' may not include Provenance or AuditEvent in resources", link.name);
+        }
+    }
+
+    Ok(())
+}
+
 /// Loads `Config.toml` from `CONFIG_PATH` if set, otherwise from the CWD.
 pub fn load_config() -> anyhow::Result<Config> {
     let path = env::var("CONFIG_PATH").unwrap_or_else(|_| "Config.toml".to_string());
@@ -158,6 +310,8 @@ pub fn load_config() -> anyhow::Result<Config> {
     if let Ok(v) = env::var("FHIR_SYNC_GRPC_PORT") {
         config.server.grpc_port = v.parse()?;
     }
+
+    validate_replication(&config.replication)?;
 
     Ok(config)
 }
