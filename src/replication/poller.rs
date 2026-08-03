@@ -6,10 +6,12 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::Value;
+use tokio::sync::Notify;
 use tracing::{info, warn};
 
 use crate::config::{Config, ReplicationLink, ReplicationMode, ReplicationNode};
 
+use super::conflict;
 use super::counters::{spawn_reporter, Counters};
 use super::util::{fabric_tag, load_checkpoint, parse_etag, save_checkpoint, token_for_node, write_dead_letter, DeadLetterRecord, LinkCheckpoint};
 use super::writer::{ReplicateError, WriteResult};
@@ -39,6 +41,7 @@ pub async fn run(
     source_node: ReplicationNode,
     target_node: ReplicationNode,
     state: SharedState,
+    poll_now: Arc<Notify>,
 ) -> anyhow::Result<()> {
     let checkpoint_path = format!("{}/replication/{}/checkpoint.json", cfg.replication.state_dir, link.name);
     let dead_letter_path = format!("{}/replication/{}/dead_letter.jsonl", cfg.replication.state_dir, link.name);
@@ -79,7 +82,12 @@ pub async fn run(
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(cfg.replication.poll_interval_ms)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(cfg.replication.poll_interval_ms)) => {}
+            _ = poll_now.notified() => {
+                info!("replication link {}: poll woken by doorbell", link.name);
+            }
+        }
     }
 }
 
@@ -98,6 +106,7 @@ async fn poll_one_cycle(
     base_ms: u64,
 ) -> Result<usize> {
     let token = token_for_node(&source_node.token_env);
+    let conflicts_path = format!("{}/replication/{}/conflicts.jsonl", cfg.replication.state_dir, link.name);
     let mut next_url = Some(build_history_url(&source_node.base_url, &cp.since, cfg.replication.page_size));
     let mut processed = 0;
 
@@ -147,6 +156,26 @@ async fn poll_one_cycle(
             match event.op {
                 HistoryOp::Create | HistoryOp::Update => {
                     if let Some(resource) = &event.resource {
+                        let recorded = cp
+                            .last_versionids_seen
+                            .get(&format!("{}/{}", event.resource_type, event.id))
+                            .map(String::as_str);
+                        if !conflict::check_and_resolve(
+                            &client,
+                            link,
+                            target_node,
+                            token_for_node(&target_node.token_env).as_deref(),
+                            &event.resource_type,
+                            &event.id,
+                            &event.version_id,
+                            resource,
+                            recorded,
+                            &conflicts_path,
+                        )
+                        .await?
+                        {
+                            continue;
+                        }
                         match replicate_with_retry(
                             &client,
                             link,
