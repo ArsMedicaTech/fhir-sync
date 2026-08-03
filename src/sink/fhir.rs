@@ -168,7 +168,9 @@ async fn sync_one(
         patient.active = Some(false.into());
     }
 
-    let body = fhirbolt::json::to_string(&patient, None).context("serializing FHIR Patient")?;
+    let body = fhirbolt::json::to_string(&patient, None)
+        .context("serializing FHIR Patient")
+        .map_err(SyncFailure::Permanent)?;
 
     let mut req = build_put_request(client, fhir_cfg, token, event).body(body);
 
