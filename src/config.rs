@@ -4,6 +4,7 @@ use std::fs;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub database: DatabaseConfig,
     #[serde(default)]
     pub server: ServerConfig,
