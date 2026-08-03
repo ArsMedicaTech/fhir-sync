@@ -27,6 +27,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = config::load_config()?;
+
+    if cfg.oscar_enabled && cfg.database.host.is_empty() {
+        anyhow::bail!("oscar_enabled = true but [database] is missing or has no host");
+    }
+    
     let metrics = metrics::Metrics::new();
     metrics::spawn_reporter(metrics.clone());
 

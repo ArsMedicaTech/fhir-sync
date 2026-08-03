@@ -22,6 +22,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     pub user: String,
     pub password: String,
