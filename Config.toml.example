@@ -22,3 +22,26 @@ checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
 retry_max_attempts = 5
 retry_base_ms = 500
 dead_letter_path = "/var/lib/fhir-sync/dead_letter.jsonl"
+
+# Optional: HAPI → HAPI replication (disabled by default).
+# [replication]
+# enabled = false
+# state_dir = "/var/lib/fhir-sync"
+# poll_interval_ms = 5000
+# page_size = 100
+#
+# [[replication.nodes]]
+# name = "node-a"
+# base_url = "http://hapi-a:8080/fhir"
+#
+# [[replication.nodes]]
+# name = "node-b"
+# base_url = "http://hapi-b:8080/fhir"
+#
+# [[replication.links]]
+# name = "a-to-b"
+# source = "node-a"
+# target = "node-b"
+# mode = "mirror"
+# resources = ["Patient"]
+# provenance = true
