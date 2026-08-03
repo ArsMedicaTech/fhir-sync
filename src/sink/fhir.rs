@@ -279,6 +279,12 @@ fn build_patient(payload: &DomainPatient, cfg: &FhirConfig) -> Patient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, DatabaseConfig, FhirConfig, ServerConfig, SyncConfig};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     fn fhir_cfg() -> FhirConfig {
         FhirConfig {
@@ -378,5 +384,161 @@ mod tests {
         assert!(!contents.contains("alice@example.com"));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn conditional_put_url_percent_encodes_pipe() {
+        use crate::event::{ResourceType, Source};
+
+        let cfg = fhir_cfg();
+        let event = SyncEvent {
+            source: Source::OscarBinlog,
+            op: Op::Upsert,
+            resource_type: ResourceType::Patient,
+            idempotency_key: "test".to_string(),
+            payload: DomainPatient {
+                demographic_no: "121".to_string(),
+                first_name: None,
+                last_name: None,
+                date_of_birth: None,
+                location: None,
+                sex: None,
+                phone: None,
+                email: None,
+                hin: None,
+            },
+            occurred_at: chrono::Utc::now(),
+        };
+
+        let req = build_put_request(&reqwest::Client::new(), &cfg, None, &event)
+            .body("{}".to_string())
+            .build()
+            .unwrap();
+
+        let url = req.url().as_str();
+        assert!(
+            url.contains("%7C"),
+            "expected percent-encoded pipe in URL: {url}"
+        );
+        assert!(!url.contains('|'), "expected no literal pipe in URL: {url}");
+    }
+
+    async fn run_with_http_status(status_line: &str, max_attempts: u32) -> (anyhow::Result<()>, u32) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let attempts = Arc::new(AtomicU32::new(0));
+        let a = attempts.clone();
+        let response = format!(
+            "HTTP/1.1 {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            status_line
+        );
+
+        tokio::spawn(async move {
+            loop {
+                match tokio::time::timeout(Duration::from_millis(100), listener.accept()).await {
+                    Ok(Ok((mut socket, _))) => {
+                        let mut buf = [0u8; 4096];
+                        let mut pos = 0;
+                        let mut header_end = None;
+                        while header_end.is_none() {
+                            let n = socket.read(&mut buf[pos..]).await.unwrap();
+                            pos += n;
+                            if let Some(i) =
+                                buf[..pos].windows(4).position(|w| w == b"\r\n\r\n")
+                            {
+                                header_end = Some(i + 4);
+                            }
+                        }
+                        let header_end = header_end.unwrap();
+                        let header = String::from_utf8_lossy(&buf[..header_end]);
+                        let content_len = header
+                            .to_lowercase()
+                            .lines()
+                            .find_map(|l| {
+                                l.strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            });
+                        if let Some(len) = content_len {
+                            let body_have = pos.saturating_sub(header_end);
+                            let mut remaining = len.saturating_sub(body_have);
+                            while remaining > 0 {
+                                let to_read = remaining.min(4096);
+                                let n = socket.read(&mut buf[..to_read]).await.unwrap();
+                                remaining -= n;
+                            }
+                        }
+
+                        a.fetch_add(1, Ordering::Relaxed);
+                        socket.write_all(response.as_bytes()).await.unwrap();
+                    }
+                    _ => break,
+                }
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let cfg = Config {
+            database: DatabaseConfig {
+                user: "".into(),
+                password: "".into(),
+                host: "".into(),
+                port: 0,
+                schema: "".into(),
+                server_id: 1,
+            },
+            server: ServerConfig::default(),
+            fhir: FhirConfig {
+                base_url: format!("http://127.0.0.1:{port}/fhir"),
+                oscar_demographic_system:
+                    "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".into(),
+                oscar_hin_system: "https://arsmedicatech.com/fhir/sid/oscar-hin".into(),
+                token_env: None,
+            },
+            sync: SyncConfig {
+                checkpoint_path: "".into(),
+                retry_max_attempts: max_attempts,
+                retry_base_ms: 1,
+                dead_letter_path: "".into(),
+            },
+            debug: None,
+        };
+
+        let event = SyncEvent {
+            source: crate::event::Source::OscarBinlog,
+            op: Op::Upsert,
+            resource_type: crate::event::ResourceType::Patient,
+            idempotency_key: "test".into(),
+            payload: DomainPatient {
+                demographic_no: "121".into(),
+                first_name: None,
+                last_name: None,
+                date_of_birth: None,
+                location: None,
+                sex: None,
+                phone: None,
+                email: None,
+                hin: None,
+            },
+            occurred_at: chrono::Utc::now(),
+        };
+
+        let metrics = crate::metrics::Metrics::new();
+        let result = sync_with_retry(&client, &cfg, None, &event, &metrics).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        (result, attempts.load(Ordering::Relaxed))
+    }
+
+    #[tokio::test]
+    async fn status_400_is_not_retried() {
+        let (result, attempts) = run_with_http_status("400 Bad Request", 3).await;
+        assert!(result.is_err());
+        assert_eq!(attempts, 1, "expected 1 attempt for 400, got {attempts}");
+    }
+
+    #[tokio::test]
+    async fn status_503_is_retried_to_max() {
+        let (result, attempts) = run_with_http_status("503 Service Unavailable", 3).await;
+        assert!(result.is_err());
+        assert_eq!(attempts, 3, "expected 3 attempts for 503, got {attempts}");
     }
 }
