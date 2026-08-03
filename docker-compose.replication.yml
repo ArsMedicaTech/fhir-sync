@@ -6,6 +6,10 @@
 #
 # Verify on B:
 #   curl "http://localhost:8083/fhir/Patient?_summary=count"
+#   curl.exe -s "http://localhost:8083/fhir/Patient?_summary=count"
+
+# or, parsed:
+#   (Invoke-RestMethod "http://localhost:8083/fhir/Patient?_summary=count").total
 
 services:
   hapi-a:
