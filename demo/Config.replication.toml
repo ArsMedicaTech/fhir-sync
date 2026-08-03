@@ -1,0 +1,47 @@
+# Replication demo: one-way A -> B, mirror mode, Patients only.
+[database]
+user = "fhirsync"
+password = "fhirsyncpw"
+host = "127.0.0.1"
+port = 3316
+schema = "oscar"
+server_id = 4321
+
+[server]
+health_port = 8080
+webhook_port = 8081
+grpc_port = 50051
+
+[fhir]
+base_url = "http://hapi-a:8080/fhir"
+oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
+oscar_hin_system = "https://arsmedicatech.com/fhir/sid/oscar-hin"
+
+[sync]
+checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
+retry_max_attempts = 5
+retry_base_ms = 500
+dead_letter_path = "/var/lib/fhir-sync/dead_letter.jsonl"
+
+[replication]
+enabled = true
+state_dir = "/var/lib/fhir-sync"
+poll_interval_ms = 5000
+page_size = 100
+
+[[replication.nodes]]
+name = "node-a"
+base_url = "http://hapi-a:8080/fhir"
+
+[[replication.nodes]]
+name = "node-b"
+base_url = "http://hapi-b:8080/fhir"
+
+[[replication.links]]
+name = "a-to-b"
+source = "node-a"
+target = "node-b"
+mode = "mirror"
+resources = ["Patient"]
+provenance = true
+conflict_policy = "dead_letter"
