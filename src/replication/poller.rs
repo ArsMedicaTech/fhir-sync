@@ -523,3 +523,41 @@ async fn replicate_delete_with_retry(
     counters.inc_dead_lettered();
     Ok(None)
 }
+
+#[cfg(test)]
+mod suppression_tests {
+    use super::source_tag_matches;
+
+    #[test]
+    fn matches_hapi_source_with_request_id_fragment() {
+        // Observed from hapiproject/hapi:v7.2.0
+        assert!(source_tag_matches(
+            "urn:arsmedicatech:fhir-sync:node-a#FRkkUAMqHdNorySm",
+            "urn:arsmedicatech:fhir-sync:node-a"
+        ));
+    }
+
+    #[test]
+    fn matches_bare_tag_without_fragment() {
+        assert!(source_tag_matches(
+            "urn:arsmedicatech:fhir-sync:node-a",
+            "urn:arsmedicatech:fhir-sync:node-a"
+        ));
+    }
+
+    #[test]
+    fn does_not_match_other_node() {
+        assert!(!source_tag_matches(
+            "urn:arsmedicatech:fhir-sync:node-b#FRkkUAMqHdNorySm",
+            "urn:arsmedicatech:fhir-sync:node-a"
+        ));
+    }
+
+    #[test]
+    fn does_not_match_foreign_source() {
+        assert!(!source_tag_matches(
+            "http://some-other-system/ehr#abc",
+            "urn:arsmedicatech:fhir-sync:node-a"
+        ));
+    }
+}
