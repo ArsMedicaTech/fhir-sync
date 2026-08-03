@@ -63,6 +63,38 @@ pub fn load_checkpoint(path: &str) -> LinkCheckpoint {
     }
 }
 
+/// Record appended to the conflicts file for a link.
+#[derive(Debug, Serialize)]
+pub struct ConflictRecord<'a> {
+    pub timestamp: String,
+    pub link: &'a str,
+    pub resource_type: &'a str,
+    pub source_id: &'a str,
+    pub target_id: &'a str,
+    pub source_version_id: &'a str,
+    pub source_meta: Option<Value>,
+    pub target_meta: Option<Value>,
+    pub policy: &'a str,
+    pub identifiers: Value,
+}
+
+/// Appends one conflict record.
+pub fn write_conflict(path: &str, record: &ConflictRecord) -> Result<()> {
+    if let Some(parent) = Path::new(path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("opening conflict file {path}"))?;
+
+    writeln!(file, "{}", serde_json::to_string(record)?)
+        .context("writing conflict record")?;
+    Ok(())
+}
+
 /// Record appended to the dead-letter file for a link.
 #[derive(Debug, Serialize)]
 pub struct DeadLetterRecord<'a> {
