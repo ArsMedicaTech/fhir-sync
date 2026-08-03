@@ -15,6 +15,7 @@ pub mod sink;
 pub mod checkpoint;
 pub mod backfill;
 pub mod metrics;
+pub mod replication;
 
 pub mod proto;
 
@@ -53,6 +54,10 @@ async fn main() -> anyhow::Result<()> {
     let source_task = tokio::spawn(sources::mariadb_binlog::run(cfg.clone(), tx.clone(), metrics.clone()));
     let webhook_task = tokio::spawn(webhook::run_webhook_server(tx.clone(), cfg.server.webhook_port));
     let api_task      = tokio::spawn(api::run_grpc_server(cfg.server.health_port, cfg.server.grpc_port));
+
+    if cfg.replication.enabled {
+        tokio::spawn(replication::run(cfg.clone()));
+    }
 
     // graceful shutdown on Ctrl-C
     select! {
