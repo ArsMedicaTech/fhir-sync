@@ -35,7 +35,8 @@ services:
     volumes:
       - ./demo/seed_oscar.sql:/docker-entrypoint-initdb.d/seed_oscar.sql:ro
     ports:
-      - "3316:3306"
+      # Conflicts with Oscar EMR DB.
+      - "3317:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-psupersecretroot"]
       interval: 5s
