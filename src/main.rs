@@ -49,14 +49,18 @@ async fn main() -> anyhow::Result<()> {
     // *before* the source task starts, so the source's `resolve_start_position`
     // reads this exact pre-snapshot checkpoint instead of racing its own
     // cold-start `SHOW MASTER STATUS` call.
-    if std::env::args().any(|a| a == "--backfill") {
+    if cfg.oscar_enabled && std::env::args().any(|a| a == "--backfill") {
         let columns = sources::mariadb_binlog::resolve_column_map(&cfg.database).await?;
         let total = backfill::run(&cfg, &columns, &tx, &metrics).await?;
         info!("backfill: sent {total} patients");
     }
 
-    let source_task = tokio::spawn(sources::mariadb_binlog::run(cfg.clone(), tx.clone(), metrics.clone()));
+    let source_task = if cfg.oscar_enabled {
+        tokio::spawn(sources::mariadb_binlog::run(cfg.clone(), tx.clone(), metrics.clone()))
+    } else { never() };
+    
     let webhook_task = tokio::spawn(webhook::run_webhook_server(tx.clone(), cfg.server.webhook_port));
+    
     let api_task      = tokio::spawn(api::run_grpc_server(cfg.server.health_port, cfg.server.grpc_port));
 
     let replication_task = if cfg.replication.enabled {
