@@ -28,6 +28,7 @@ enabled = true
 state_dir = "/var/lib/fhir-sync"
 poll_interval_ms = 5000
 page_size = 100
+doorbell_port = 8082
 
 [[replication.nodes]]
 name = "node-a"
@@ -45,3 +46,14 @@ mode = "mirror"
 resources = ["Patient"]
 provenance = true
 conflict_policy = "dead_letter"
+subscription_doorbell = true
+
+[[replication.links]]
+name = "b-to-a"
+source = "node-b"
+target = "node-a"
+mode = "mirror"
+resources = ["Patient"]
+provenance = true
+conflict_policy = "dead_letter"
+subscription_doorbell = false
