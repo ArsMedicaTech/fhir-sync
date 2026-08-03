@@ -1,7 +1,13 @@
 # Dual-HAPI replication demo (compose-local only).
 # Do not point this at fhir.synapticl.com.
-#
+
+#   Pull the latest:
+#   docker compose -f docker-compose.replication.yml pull fhir-sync
+
+#   Run the demo:
 #   docker compose -f docker-compose.replication.yml up --build -d
+
+#   Seed A:
 #   Bash: ./demo/seed_a.sh
 #   PowerShell: ./demo/seed_a.ps1
 #
