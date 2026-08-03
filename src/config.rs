@@ -21,7 +21,7 @@ pub struct Config {
     pub oscar_enabled: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct DatabaseConfig {
     pub user: String,
     pub password: String,
