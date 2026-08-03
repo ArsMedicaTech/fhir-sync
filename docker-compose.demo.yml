@@ -38,10 +38,11 @@ services:
       # Conflicts with Oscar EMR DB.
       - "3317:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-psupersecretroot"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 60s
 
   # Second, throwaway HAPI instance for the demo — never fhir.synapticl.com
   # (spec §6 Testing Notes).
