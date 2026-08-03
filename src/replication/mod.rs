@@ -1,7 +1,9 @@
 //! Multi-FHIR replication fabric: HAPI → HAPI change-feed polling and
 //! generic JSON pass-through.
 
+pub mod conflict;
 pub mod counters;
+pub mod doorbell;
 pub mod poller;
 pub mod provenance;
 pub mod util;
@@ -10,6 +12,7 @@ pub mod writer;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 use crate::config::{Config, ReplicationLink, ReplicationNode};
@@ -46,7 +49,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         }
     }
 
+    let mut notifiers: HashMap<String, Arc<Notify>> = HashMap::new();
     let mut handles = Vec::new();
+    let mut doorbell_needed = false;
+
     for link in &cfg.replication.links {
         let source = match find_node(&cfg, &link.source) {
             Ok(n) => n,
@@ -63,6 +69,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             }
         };
 
+        doorbell_needed = doorbell_needed || link.subscription_doorbell;
+        let notify = Arc::new(Notify::new());
+        notifiers.insert(link.name.clone(), notify.clone());
+
         let client = reqwest::Client::new();
         let state = state.clone();
         let cfg = cfg.clone();
@@ -71,15 +81,24 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         let target = target.clone();
 
         handles.push(tokio::spawn(async move {
-            poller::run(client, cfg, link, source, target, state).await
+            poller::run(client, cfg, link, source, target, state, notify).await
+        }));
+    }
+
+    if doorbell_needed {
+        let client = reqwest::Client::new();
+        let notifiers = Arc::new(notifiers);
+        let cfg = cfg.clone();
+        handles.push(tokio::spawn(async move {
+            doorbell::run(client, cfg, notifiers).await
         }));
     }
 
     for h in handles {
         match h.await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => error!("replication: poller exited with error: {e:?}"),
-            Err(e) => error!("replication: poller join error: {e:?}"),
+            Ok(Err(e)) => error!("replication: task exited with error: {e:?}"),
+            Err(e) => error!("replication: task join error: {e:?}"),
         }
     }
 
