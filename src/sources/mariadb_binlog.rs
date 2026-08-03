@@ -13,6 +13,7 @@
 //!    (F12).
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use mysql_binlog_connector_rust::{
@@ -31,6 +32,8 @@ use crate::metrics::SharedMetrics;
 use crate::sources::{RowChange, RowOp, SourcePosition, TableRef};
 
 const DEMOGRAPHIC_TABLE: &str = "demographic";
+const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
+const READ_ERROR_BACKOFF_MS: u64 = 100;
 
 /// Runs the MariaDB binlog listener to completion (or until the sink
 /// channel closes). Intended to be spawned as a top-level tokio task.
@@ -50,7 +53,8 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
         &url,
         db.server_id,
         StartPosition::BinlogPosition(current_filename.clone(), start_position),
-    );
+    )
+    .with_master_heartbeat(Duration::from_secs(30));
 
     let mut stream = client
         .connect()
@@ -63,12 +67,24 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
     );
 
     let mut tables: HashMap<u64, TableRef> = HashMap::new();
+    let mut consecutive_errors = 0u32;
 
     loop {
         let (header, data) = match stream.read().await {
-            Ok(v) => v,
+            Ok(v) => {
+                consecutive_errors = 0;
+                v
+            }
             Err(e) => {
-                error!("mariadb_binlog: read error: {e:?}");
+                consecutive_errors += 1;
+                error!(
+                    "mariadb_binlog: read error ({}/{}): {e:?}",
+                    consecutive_errors, MAX_CONSECUTIVE_READ_ERRORS
+                );
+                if consecutive_errors >= MAX_CONSECUTIVE_READ_ERRORS {
+                    bail!("mariadb_binlog: too many consecutive read errors");
+                }
+                tokio::time::sleep(Duration::from_millis(READ_ERROR_BACKOFF_MS)).await;
                 continue;
             }
         };
