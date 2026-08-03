@@ -2,7 +2,8 @@
 # Do not point this at fhir.synapticl.com.
 #
 #   docker compose -f docker-compose.replication.yml up --build -d
-#   ./demo/seed_a.sh
+#   Bash: ./demo/seed_a.sh
+#   PowerShell: ./demo/seed_a.ps1
 #
 # Verify on B:
 #   curl "http://localhost:8083/fhir/Patient?_summary=count"
