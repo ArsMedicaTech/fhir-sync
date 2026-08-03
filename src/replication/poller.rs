@@ -121,8 +121,9 @@ async fn poll_one_cycle(
             .await
             .with_context(|| format!("GET {url}"))?;
         if !resp.status().is_success() {
+            let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HAPI history request failed ({}): {text}", resp.status());
+            anyhow::bail!("HAPI history request failed ({status}): {text}");
         }
 
         let bundle: Value = resp.json().await?;
@@ -194,7 +195,7 @@ async fn poll_one_cycle(
                             Some(result) => {
                                 counters.inc_replicated();
                                 let key = format!("{}/{}", event.resource_type, event.id);
-                                cp.last_versionids_seen.insert(key, result.target_version);
+                                cp.last_versionids_seen.insert(key, result.target_version.clone());
                                 let echo_key = format!("{}/{}/{}", target_node.name, event.resource_type, result.target_id);
                                 state.echo.lock().unwrap().insert(echo_key, result.target_version);
                             }
