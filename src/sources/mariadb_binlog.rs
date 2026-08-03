@@ -115,6 +115,8 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                             &row.column_values,
                             RowOp::Insert,
                             Op::Upsert,
+                            &current_filename,
+                            header.next_event_position,
                         )
                         .await;
                     }
@@ -132,6 +134,8 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                             &after.column_values,
                             RowOp::Update,
                             Op::Upsert,
+                            &current_filename,
+                            header.next_event_position,
                         )
                         .await;
                     }
@@ -150,6 +154,8 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                             &row.column_values,
                             RowOp::Delete,
                             Op::Delete,
+                            &current_filename,
+                            header.next_event_position,
                         )
                         .await;
                     }
@@ -252,6 +258,8 @@ async fn emit_row(
     values: &[ColumnValue],
     row_op: RowOp,
     sync_op: Op,
+    file: &str,
+    pos: u32,
 ) -> bool {
     let after: Vec<Option<String>> = values.iter().map(column_value_to_string).collect();
 
@@ -260,11 +268,9 @@ async fn emit_row(
         table: DEMOGRAPHIC_TABLE.to_string(),
         op: row_op,
         after,
-        // File+position is threaded through the checkpoint, not per-row;
-        // the idempotency key only needs a value that's unique per commit.
         position: SourcePosition::FilePos {
-            file: String::new(),
-            pos: 0,
+            file: file.to_string(),
+            pos,
         },
     };
 
@@ -273,9 +279,8 @@ async fn emit_row(
     };
 
     let idempotency_key = format!(
-        "oscar:demographic:{}:{}",
-        patient.demographic_no,
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        "oscar:demographic:{}:{}:{}",
+        patient.demographic_no, file, pos
     );
     let sync_event = SyncEvent {
         source: EventSource::OscarBinlog,
