@@ -48,12 +48,6 @@ services:
     image: hapiproject/hapi:v7.2.0
     ports:
       - "8082:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/fhir/metadata"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
 
   fhir-sync:
     #build:
@@ -63,8 +57,6 @@ services:
     image: ${FHIR_SYNC_IMAGE:-ghcr.io/arsmedicatech/fhir-sync:main}
     depends_on:
       mariadb:
-        condition: service_healthy
-      hapi:
         condition: service_healthy
     environment:
       CONFIG_PATH: /demo/Config.demo.toml
