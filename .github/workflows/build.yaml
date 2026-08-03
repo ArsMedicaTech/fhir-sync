@@ -73,17 +73,16 @@ jobs:
         env:
           FHIR_SYNC_IMAGE: ${{ env.FHIR_SYNC_IMAGE }}
         run: |
-          docker compose -f docker-compose.demo.yml up -d
+          docker compose -f docker-compose.demo.yml up -d --wait --wait-timeout 300
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8082/fhir/metadata >/dev/null 2>&1 && break
+            sleep 5
+          done
           docker compose -f docker-compose.demo.yml exec -T mariadb \
             mysql -uoscar -poscarpw oscar < demo/insert_patient.sql
 
       - name: Assert the patient reached HAPI
         run: |
-          for i in $(seq 1 30); do
-            curl -fsS "http://localhost:8082/fhir/metadata" >/dev/null 2>&1 && break
-            sleep 5
-          done
-
           for i in $(seq 1 30); do
             body=$(curl -sS "http://localhost:8082/fhir/Patient?identifier=121" 2>&1)
             n=$(printf '%s' "$body" | jq -r '.total // empty' 2>/dev/null)
