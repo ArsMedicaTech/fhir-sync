@@ -355,6 +355,12 @@ fn parse_history_entry(entry: &Value) -> Option<HistoryEvent> {
     })
 }
 
+/// HAPI appends its request id as a URI fragment
+/// (`urn:...:node-a#FRkkUAMqHdNorySm`), so compare the base only.
+fn source_tag_matches(source: &str, tag: &str) -> bool {
+    source.split('#').next().unwrap_or(source) == tag
+}
+
 fn should_suppress(
     link: &ReplicationLink,
     source_node: &ReplicationNode,
@@ -371,7 +377,7 @@ fn should_suppress(
         .and_then(|m| m.get("source"))
         .and_then(Value::as_str)
     {
-        if source == target_tag {
+        if source_tag_matches(source, &target_tag) {
             return true;
         }
     }
