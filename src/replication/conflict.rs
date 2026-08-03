@@ -61,10 +61,10 @@ pub async fn check_and_resolve(
                 .await
                 .with_context(|| format!("conflict search {base}"))?;
             if !resp.status().is_success() {
+                let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
                 return Err(ReplicateError::Retryable(anyhow::anyhow!(
-                    "conflict search failed ({}): {text}",
-                    resp.status()
+                    "conflict search failed ({status}): {text}"
                 )));
             }
             let bundle: Value = resp.json::<Value>().await.context("parsing conflict search bundle")?;

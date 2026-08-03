@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::sync::Notify;
 use tracing::{info, warn};
@@ -172,7 +172,8 @@ async fn poll_one_cycle(
                             recorded,
                             &conflicts_path,
                         )
-                        .await?
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e:?}"))?
                         {
                             continue;
                         }

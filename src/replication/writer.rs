@@ -313,7 +313,7 @@ async fn federate_soft_delete(
     if !sresp.status().is_success() {
         return Err(ReplicateError::Retryable(anyhow::anyhow!("federate delete search failed ({})", sresp.status())));
     }
-    let bundle: Value = sresp.json().await?;
+    let bundle: Value = sresp.json().await.context("parsing federate delete search bundle")?;
     let target_id = bundle
         .get("entry")
         .and_then(Value::as_array)
@@ -339,7 +339,7 @@ async fn federate_soft_delete(
         }
         return Err(ReplicateError::Retryable(anyhow::anyhow!("federate delete GET failed ({})", gresp.status())));
     }
-    let mut patient: Value = gresp.json().await?;
+    let mut patient: Value = gresp.json().await.context("parsing federate delete GET body")?;
     if let Some(obj) = patient.as_object_mut() {
         obj.insert("active".to_string(), Value::Bool(false));
     }

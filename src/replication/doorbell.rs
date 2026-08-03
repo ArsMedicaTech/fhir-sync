@@ -127,8 +127,9 @@ async fn ensure_subscription(
     }
     let presp = preq.send().await?;
     if !presp.status().is_success() {
+        let status = presp.status();
         let text = presp.text().await.unwrap_or_default();
-        anyhow::bail!("Subscription POST failed ({}): {text}", presp.status());
+        anyhow::bail!("Subscription POST failed ({status}): {text}");
     }
     Ok(())
 }
