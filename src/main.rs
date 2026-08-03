@@ -37,7 +37,11 @@ async fn main() -> anyhow::Result<()> {
     // Sink must be draining before backfill sends anything — otherwise a
     // backfill larger than the channel capacity would block forever with
     // no consumer yet running.
-    let sink_task = tokio::spawn(sink::fhir::run(cfg.clone(), rx, metrics.clone()));
+    let never = || tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+
+    let sink_task = if cfg.oscar_enabled {
+        tokio::spawn(sink::fhir::run(cfg.clone(), rx, metrics.clone()))
+    } else { never() };
 
     // `--backfill` snapshot mode. Captures the pre-scan
     // binlog position, persists it as the checkpoint, then batch-sends the
@@ -55,9 +59,9 @@ async fn main() -> anyhow::Result<()> {
     let webhook_task = tokio::spawn(webhook::run_webhook_server(tx.clone(), cfg.server.webhook_port));
     let api_task      = tokio::spawn(api::run_grpc_server(cfg.server.health_port, cfg.server.grpc_port));
 
-    if cfg.replication.enabled {
-        tokio::spawn(replication::run(cfg.clone()));
-    }
+    let replication_task = if cfg.replication.enabled {
+        tokio::spawn(replication::run(cfg.clone()))
+    } else { never() };
 
     // graceful shutdown on Ctrl-C
     select! {
@@ -65,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         res = sink_task     => handle_exit("sink",     res),
         res = webhook_task  => handle_exit("webhook",  res),
         res = api_task      => handle_exit("api",      res),
+        res = replication_task => handle_exit("replication", res)
         _  = signal::ctrl_c() => info!("Ctrl-C received, shutting down"),
     };
 
