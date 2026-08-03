@@ -60,6 +60,11 @@ impl Default for ServerConfig {
     }
 }
 
+/// Oscar CDC pipeline (binlog source + sink + backfill). Off for
+/// replication-only deployments, which have no MySQL to tail.
+#[serde(default = "default_true")]
+pub oscar_enabled: bool,
+
 fn default_health_port() -> u16 {
     8080
 }

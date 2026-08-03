@@ -1,4 +1,6 @@
 # Replication demo: one-way A -> B, mirror mode, Patients only.
+oscar_enabled = false
+
 [database]
 user = "fhirsync"
 password = "fhirsyncpw"
