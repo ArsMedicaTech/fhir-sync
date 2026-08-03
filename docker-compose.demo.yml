@@ -67,7 +67,7 @@ services:
       mariadb:
         condition: service_healthy
       hapi:
-        condition: service_started
+        condition: service_healthy
     environment:
       CONFIG_PATH: /demo/Config.demo.toml
       RUST_LOG: info
