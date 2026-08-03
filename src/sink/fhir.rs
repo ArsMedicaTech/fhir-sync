@@ -54,6 +54,7 @@ pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>, metrics: SharedMetric
 
 /// Retries `sync_one` with exponential backoff, doubling `retry_base_ms`
 /// each attempt (capped to avoid overflow), up to `retry_max_attempts`.
+/// Permanent client errors are dead-lettered immediately with no retries.
 async fn sync_with_retry(
     client: &reqwest::Client,
     cfg: &Config,
@@ -68,7 +69,17 @@ async fn sync_with_retry(
     for attempt in 0..max_attempts {
         match sync_one(client, &cfg.fhir, token, event).await {
             Ok(()) => return Ok(()),
-            Err(e) => {
+            Err(SyncFailure::Permanent(e)) => {
+                warn!(
+                    "fhir sink: attempt {}/{} failed permanently for {}: {e:?}",
+                    attempt + 1,
+                    max_attempts,
+                    event.idempotency_key
+                );
+                last_err = Some(e);
+                break;
+            }
+            Err(SyncFailure::Retryable(e)) => {
                 warn!(
                     "fhir sink: attempt {}/{} failed for {}: {e:?}",
                     attempt + 1,
@@ -114,12 +125,44 @@ fn write_dead_letter(path: &str, event: &SyncEvent, err: &anyhow::Error) -> Resu
     Ok(())
 }
 
+/// Classifies a sink failure as retryable (network / 5xx / 429) or permanent
+/// (any other 4xx). Keeps the decision out of string matching.
+#[derive(Debug)]
+enum SyncFailure {
+    Retryable(anyhow::Error),
+    Permanent(anyhow::Error),
+}
+
+fn build_put_request(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<&str>,
+    event: &SyncEvent,
+) -> reqwest::RequestBuilder {
+    let base = format!("{}/Patient", fhir_cfg.base_url.trim_end_matches('/'));
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_demographic_system, event.payload.demographic_no
+    );
+
+    let mut req = client
+        .put(&base)
+        .query(&[("identifier", identifier.as_str())])
+        .header("Content-Type", "application/fhir+json");
+
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+
+    req
+}
+
 async fn sync_one(
     client: &reqwest::Client,
     fhir_cfg: &FhirConfig,
     token: Option<&str>,
     event: &SyncEvent,
-) -> Result<()> {
+) -> Result<(), SyncFailure> {
     let mut patient = build_patient(&event.payload, fhir_cfg);
     if event.op == Op::Delete {
         patient.active = Some(false.into());
@@ -127,31 +170,29 @@ async fn sync_one(
 
     let body = fhirbolt::json::to_string(&patient, None).context("serializing FHIR Patient")?;
 
-    let url = format!(
-        "{}/Patient?identifier={}|{}",
-        fhir_cfg.base_url.trim_end_matches('/'),
-        fhir_cfg.oscar_demographic_system,
-        event.payload.demographic_no,
-    );
+    let mut req = build_put_request(client, fhir_cfg, token, event).body(body);
 
-    let mut req = client
-        .put(&url)
-        .header("Content-Type", "application/fhir+json")
-        .body(body);
-
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-
-    let resp = req.send().await.context("sending conditional PUT to HAPI")?;
+    let resp = req
+        .send()
+        .await
+        .with_context(|| "sending conditional PUT to HAPI")
+        .map_err(SyncFailure::Retryable)?;
     let status = resp.status();
 
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("HAPI conditional PUT failed ({status}): {text}");
+        let err = anyhow::anyhow!("HAPI conditional PUT failed ({status}): {text}");
+        if status.is_client_error() && status.as_u16() != 429 {
+            return Err(SyncFailure::Permanent(err));
+        }
+        return Err(SyncFailure::Retryable(err));
     }
 
-    info!("fhir sink: synced {} -> {}", event.idempotency_key, url);
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_demographic_system, event.payload.demographic_no
+    );
+    info!("fhir sink: synced {} -> {}", event.idempotency_key, identifier);
     Ok(())
 }
 
