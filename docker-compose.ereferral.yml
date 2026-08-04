@@ -1,0 +1,37 @@
+services:
+  hapi-a:
+    image: hapiproject/hapi:v7.2.0
+    environment:
+      - hapi.fhir.fhir_version=R4
+      - hapi.fhir.auto_create_placeholder_reference_targets=true
+    ports:
+      - "8082:8080"
+    volumes:
+      - hapi-a-state:/data/hapi
+
+  hapi-b:
+    image: hapiproject/hapi:v7.2.0
+    environment:
+      - hapi.fhir.fhir_version=R4
+      - hapi.fhir.auto_create_placeholder_reference_targets=true
+    ports:
+      - "8083:8080"
+    volumes:
+      - hapi-b-state:/data/hapi
+
+  fhir-sync:
+    image: ${FHIR_SYNC_IMAGE:-ghcr.io/arsmedicatech/fhir-sync:main}
+    depends_on:
+      - hapi-a
+      - hapi-b
+    environment:
+      CONFIG_PATH: /demo/Config.ereferral.toml
+      RUST_LOG: info
+    volumes:
+      - ./demo/Config.ereferral.toml:/demo/Config.ereferral.toml:ro
+      - fhir-sync-ereferral-state:/var/lib/fhir-sync
+
+volumes:
+  hapi-a-state:
+  hapi-b-state:
+  fhir-sync-ereferral-state:
