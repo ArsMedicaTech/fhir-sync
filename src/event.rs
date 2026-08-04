@@ -26,6 +26,15 @@ pub enum Op {
     Delete,
 }
 
+impl Op {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Op::Upsert => "upsert",
+            Op::Delete => "delete",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceType {
     Patient,
