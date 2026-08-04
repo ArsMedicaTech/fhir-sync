@@ -13,10 +13,11 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use fhirbolt::model::r4b::resources::Patient;
 use fhirbolt::model::r4b::types::{Address, ContactPoint, HumanName, Identifier, Meta};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
 use crate::config::{Config, FhirConfig};
+use crate::dispatch::DispatchNotification;
 use crate::domain::patient::DomainPatient;
 use crate::event::{Op, SyncEvent};
 use crate::metrics::SharedMetrics;
@@ -24,7 +25,12 @@ use crate::metrics::SharedMetrics;
 const META_SOURCE: &str = "urn:arsmedicatech:fhir-sync:oscar";
 
 /// Runs the sink to completion (until the channel closes).
-pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>, metrics: SharedMetrics) -> Result<()> {
+pub async fn run(
+    cfg: Config,
+    mut rx: Receiver<SyncEvent>,
+    metrics: SharedMetrics,
+    dispatch_tx: Option<Sender<DispatchNotification>>,
+) -> Result<()> {
     let client = reqwest::Client::new();
     let token = cfg
         .fhir
@@ -36,11 +42,27 @@ pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>, metrics: SharedMetric
         let key = event.idempotency_key.clone();
 
         match sync_with_retry(&client, &cfg, token.as_deref(), &event, &metrics).await {
-            Ok(()) => metrics.inc_synced(),
+            Ok(result) => {
+                metrics.inc_synced();
+                if let Some(tx) = &dispatch_tx {
+                    if !result.fhir_id.is_empty() {
+                        let n = build_dispatch_notification(&event, &cfg, &result);
+                        if tx.try_send(n).is_err() {
+                            warn!("fhir sink: dispatch channel full or closed, dropping notification");
+                            metrics.inc_dispatch_dropped();
+                        }
+                    } else {
+                        warn!("fhir sink: HAPI success but no fhir_id for {key}; not dispatching");
+                    }
+                }
+            }
             Err(e) => {
-                error!("fhir sink: exhausted retries for {key}: {e:?}");
+                let err = match e {
+                    SyncFailure::Retryable(inner) | SyncFailure::Permanent(inner) => inner,
+                };
+                error!("fhir sink: exhausted retries for {key}: {err:?}");
                 metrics.inc_dead_lettered();
-                if let Err(dl_err) = write_dead_letter(&cfg.sync.dead_letter_path, &event, &e) {
+                if let Err(dl_err) = write_dead_letter(&cfg.sync.dead_letter_path, &event, &err) {
                     // PHI note (spec §8): never let a dead-letter write failure crash the
                     // stream either — log identifier only and move on.
                     error!("fhir sink: failed to write dead letter for {key}: {dl_err:?}");
@@ -52,6 +74,26 @@ pub async fn run(cfg: Config, mut rx: Receiver<SyncEvent>, metrics: SharedMetric
     Ok(())
 }
 
+fn build_dispatch_notification(
+    event: &SyncEvent,
+    cfg: &Config,
+    result: &FhirResult,
+) -> DispatchNotification {
+    DispatchNotification {
+        resource_type: match event.resource_type {
+            crate::event::ResourceType::Patient => "Patient",
+        }
+        .to_string(),
+        fhir_id: result.fhir_id.clone(),
+        fhir_version_id: result.version_id.clone(),
+        op: event.op,
+        source: event.source,
+        idempotency_key: event.idempotency_key.clone(),
+        occurred_at: event.occurred_at,
+        fhir_base_url: cfg.fhir.base_url.clone(),
+    }
+}
+
 /// Retries `sync_one` with exponential backoff, doubling `retry_base_ms`
 /// each attempt (capped to avoid overflow), up to `retry_max_attempts`.
 /// Permanent client errors are dead-lettered immediately with no retries.
@@ -61,14 +103,14 @@ async fn sync_with_retry(
     token: Option<&str>,
     event: &SyncEvent,
     metrics: &SharedMetrics,
-) -> Result<()> {
+) -> Result<FhirResult, SyncFailure> {
     let max_attempts = cfg.sync.retry_max_attempts.max(1);
     let base_ms = cfg.sync.retry_base_ms;
 
     let mut last_err = None;
     for attempt in 0..max_attempts {
         match sync_one(client, &cfg.fhir, token, event).await {
-            Ok(()) => return Ok(()),
+            Ok(res) => return Ok(res),
             Err(SyncFailure::Permanent(e)) => {
                 warn!(
                     "fhir sink: attempt {}/{} failed permanently for {}: {e:?}",
@@ -133,6 +175,13 @@ enum SyncFailure {
     Permanent(anyhow::Error),
 }
 
+/// The HAPI-assigned identifiers captured from a successful conditional PUT.
+#[derive(Debug)]
+struct FhirResult {
+    fhir_id: String,
+    version_id: Option<String>,
+}
+
 fn build_put_request(
     client: &reqwest::Client,
     fhir_cfg: &FhirConfig,
@@ -162,7 +211,7 @@ async fn sync_one(
     fhir_cfg: &FhirConfig,
     token: Option<&str>,
     event: &SyncEvent,
-) -> Result<(), SyncFailure> {
+) -> Result<FhirResult, SyncFailure> {
     let mut patient = build_patient(&event.payload, fhir_cfg);
     if event.op == Op::Delete {
         patient.active = Some(false.into());
@@ -190,12 +239,72 @@ async fn sync_one(
         return Err(SyncFailure::Retryable(err));
     }
 
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let body_text = resp.text().await.unwrap_or_default();
+
+    let mut result = FhirResult {
+        fhir_id: String::new(),
+        version_id: None,
+    };
+
+    if !body_text.trim().is_empty() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body_text) {
+            if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                result.fhir_id = id.to_string();
+            }
+            if let Some(vid) = value
+                .get("meta")
+                .and_then(|m| m.get("versionId"))
+                .and_then(|v| v.as_str())
+            {
+                result.version_id = Some(vid.to_string());
+            }
+        }
+    }
+
+    if result.fhir_id.is_empty() {
+        if let Some(loc) = location {
+            result.fhir_id = parse_location_id(&loc).unwrap_or_default();
+            result.version_id = parse_location_version_id(&loc);
+        }
+    }
+
     let identifier = format!(
         "{}|{}",
         fhir_cfg.oscar_demographic_system, event.payload.demographic_no
     );
-    info!("fhir sink: synced {} -> {}", event.idempotency_key, identifier);
-    Ok(())
+    info!(
+        "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
+        event.idempotency_key, identifier, result.fhir_id, result.version_id
+    );
+    Ok(result)
+}
+
+/// Extracts the resource id from a `Location` header like
+/// `Patient/123/_history/2` or `http://.../Patient/123/_history/2`.
+fn parse_location_id(location: &str) -> Option<String> {
+    let parts: Vec<&str> = location.trim_end_matches('/').split('/').collect();
+    if parts.len() >= 3 && parts[parts.len() - 2] == "_history" {
+        return Some(parts[parts.len() - 3].to_string());
+    }
+    if parts.len() >= 2 {
+        return Some(parts.last().unwrap().to_string());
+    }
+    None
+}
+
+/// Extracts the `versionId` from a `Location` header ending in
+/// `.../Patient/{id}/_history/{vid}`.
+fn parse_location_version_id(location: &str) -> Option<String> {
+    let parts: Vec<&str> = location.trim_end_matches('/').split('/').collect();
+    if parts.len() >= 2 && parts[parts.len() - 2] == "_history" {
+        return Some(parts.last().unwrap().to_string());
+    }
+    None
 }
 
 /// M/male -> male, F/female -> female, else unknown. Never omitted (D5).
@@ -281,7 +390,10 @@ fn build_patient(payload: &DomainPatient, cfg: &FhirConfig) -> Patient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, DatabaseConfig, FhirConfig, ServerConfig, SyncConfig};
+    use crate::config::{
+        Config, DatabaseConfig, DispatchConfig, FhirConfig, ReplicationConfig, ServerConfig,
+        SyncConfig,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -425,7 +537,7 @@ mod tests {
         assert!(!url.contains('|'), "expected no literal pipe in URL: {url}");
     }
 
-    async fn run_with_http_status(status_line: &str, max_attempts: u32) -> (anyhow::Result<()>, u32) {
+    async fn run_with_http_status(status_line: &str, max_attempts: u32) -> (Result<(), SyncFailure>, u32) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let attempts = Arc::new(AtomicU32::new(0));
@@ -502,6 +614,9 @@ mod tests {
                 retry_base_ms: 1,
                 dead_letter_path: "".into(),
             },
+            replication: ReplicationConfig::default(),
+            dispatch: DispatchConfig::default(),
+            oscar_enabled: true,
             debug: None,
         };
 
@@ -525,7 +640,9 @@ mod tests {
         };
 
         let metrics = crate::metrics::Metrics::new();
-        let result = sync_with_retry(&client, &cfg, None, &event, &metrics).await;
+        let result = sync_with_retry(&client, &cfg, None, &event, &metrics)
+            .await
+            .map(|_| ());
         tokio::time::sleep(Duration::from_millis(10)).await;
         (result, attempts.load(Ordering::Relaxed))
     }
