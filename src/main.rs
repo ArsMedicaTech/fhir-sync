@@ -42,6 +42,8 @@ async fn main() -> anyhow::Result<()> {
     // sink is the single consumer (D4). No tokio::broadcast in this phase.
     let (tx, rx) = mpsc::channel::<event::SyncEvent>(1024);
 
+    let never = || tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+
     // Dispatch fan-out channel. Created only when dispatch is enabled so the
     // sink's optional sender is never attached to a dangling receiver.
     let (dispatch_tx, dispatch_task) = if cfg.dispatch.enabled {
@@ -55,7 +57,6 @@ async fn main() -> anyhow::Result<()> {
     // Sink must be draining before backfill sends anything — otherwise a
     // backfill larger than the channel capacity would block forever with
     // no consumer yet running.
-    let never = || tokio::spawn(std::future::pending::<anyhow::Result<()>>());
 
     let sink_task = if cfg.oscar_enabled {
         tokio::spawn(sink::fhir::run(cfg.clone(), rx, metrics.clone(), dispatch_tx.clone()))
