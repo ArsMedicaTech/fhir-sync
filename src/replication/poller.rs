@@ -22,7 +22,7 @@ use super::writer::{ReplicateError, WriteResult};
 use super::{writer, SharedState};
 
 #[derive(Debug, Clone)]
-enum HistoryOp {
+pub(crate) enum HistoryOp {
     Create,
     Update,
     Delete,
