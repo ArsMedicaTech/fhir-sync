@@ -238,7 +238,11 @@ pub struct NodeOAuthConfig {
 pub struct ReplicationLink {
     pub name: String,
     pub source: String,
-    pub target: String,
+    /// `None` marks an observe-only link: poll `source`'s `_history` and emit
+    /// dispatch notifications without replicating to any target. Replication
+    /// behaviour is unchanged when a target is present.
+    #[serde(default)]
+    pub target: Option<String>,
     #[serde(default = "default_link_mode")]
     pub mode: ReplicationMode,
     pub resources: Vec<String>,
