@@ -143,7 +143,7 @@ pub async fn upsert(
         if let Err(e) = provenance::stamp(
             client,
             &target_node.base_url,
-            target_node.token_env.as_deref(),
+            target_node.token_env.as_deref(), // TODO: migrate to TokenProvider once replication runs against an authenticated HAPI
             resource_type,
             &result.target_id,
             &source_node.base_url,
