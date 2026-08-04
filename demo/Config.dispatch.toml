@@ -1,0 +1,44 @@
+# Dispatch demo: post-commit notifications to an external consumer.
+oscar_enabled = false
+
+[database]
+user = "fhirsync"
+password = "fhirsyncpw"
+host = "127.0.0.1"
+port = 3316
+schema = "oscar"
+server_id = 4321
+
+[server]
+health_port = 8080
+webhook_port = 8081
+grpc_port = 50051
+
+[fhir]
+base_url = "http://hapi-a:8080/fhir"
+oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
+oscar_hin_system = "https://arsmedicatech.com/fhir/sid/oscar-hin"
+
+[sync]
+checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
+retry_max_attempts = 5
+retry_base_ms = 500
+dead_letter_path = "/var/lib/fhir-sync/dead_letter.jsonl"
+
+[replication]
+enabled = false
+
+[dispatch]
+enabled = true
+dead_letter_dir = "/var/lib/fhir-sync/dispatch-dlq"
+retry_max_attempts = 5
+retry_base_ms = 500
+timeout_ms = 10000
+
+[[dispatch.consumers]]
+name = "consumer-a"
+url = "https://some-consumer-url.com/webhooks/fhir-sync"
+secret_env = "DISPATCH_CONSUMER_A_SECRET"
+resource_types = ["Patient"]
+ops = ["upsert", "delete"]
+enabled = true
