@@ -71,6 +71,7 @@ async fn ensure_subscription(
         .iter()
         .find(|n| n.name == link.source)
         .ok_or_else(|| anyhow::anyhow!("source node {} not found", link.source))?;
+    // TODO: migrate to TokenProvider once replication runs against an authenticated HAPI
     let token = source
         .token_env
         .as_ref()

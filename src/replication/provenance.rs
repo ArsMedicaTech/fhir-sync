@@ -23,6 +23,7 @@ pub async fn stamp(
         return Ok(());
     }
 
+    // TODO: migrate to TokenProvider once replication runs against an authenticated HAPI
     let token = token_env.and_then(|key| std::env::var(key).ok());
     let url = format!("{}/Provenance", target_base.trim_end_matches('/'));
     let body = serde_json::json!({
