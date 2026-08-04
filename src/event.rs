@@ -10,6 +10,16 @@ pub enum Source {
     Grpc,
 }
 
+impl Source {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Source::OscarBinlog => "oscar_binlog",
+            Source::Webhook => "webhook",
+            Source::Grpc => "grpc",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Upsert,
