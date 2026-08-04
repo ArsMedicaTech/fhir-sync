@@ -431,6 +431,22 @@ pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) 
         if !names.insert(node.name.clone()) {
             anyhow::bail!("replication node name '{}' is duplicated", node.name);
         }
+
+        if let Some(oauth) = &node.oauth {
+            if std::env::var(&oauth.client_secret_env).is_err() {
+                anyhow::bail!(
+                    "replication node '{}' oauth client_secret_env '{}' is not set in the environment",
+                    node.name, oauth.client_secret_env
+                );
+            }
+
+            if node.token_env.is_some() {
+                tracing::warn!(
+                    "replication node '{}' has both token_env and oauth; oauth takes precedence",
+                    node.name
+                );
+            }
+        }
     }
 
     let mut link_names = std::collections::HashSet::new();
