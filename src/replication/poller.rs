@@ -25,13 +25,13 @@ enum HistoryOp {
 }
 
 #[derive(Debug, Clone)]
-struct HistoryEvent {
-    resource_type: String,
-    id: String,
-    version_id: String,
-    last_updated: String,
-    op: HistoryOp,
-    resource: Option<Value>,
+pub(crate) struct HistoryEvent {
+    pub(crate) resource_type: String,
+    pub(crate) id: String,
+    pub(crate) version_id: String,
+    pub(crate) last_updated: String,
+    pub(crate) op: HistoryOp,
+    pub(crate) resource: Option<Value>,
 }
 
 pub async fn run(
