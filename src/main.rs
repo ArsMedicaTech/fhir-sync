@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
     let api_task      = tokio::spawn(api::run_grpc_server(cfg.server.health_port, cfg.server.grpc_port));
 
     let replication_task = if cfg.replication.enabled {
-        tokio::spawn(replication::run(cfg.clone()))
+        tokio::spawn(replication::run(cfg.clone(), dispatch_tx.clone()))
     } else { never() };
 
     // graceful shutdown on Ctrl-C
