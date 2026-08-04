@@ -419,8 +419,9 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
 }
 
 /// Validates the replication configuration (node references, duplicates,
-/// federate requirements, forbidden resource types). Fatal on error.
-pub fn validate_replication(cfg: &ReplicationConfig) -> anyhow::Result<()> {
+/// federate requirements, forbidden resource types, observe-only rules,
+/// OAuth credentials). Fatal on error.
+pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) -> anyhow::Result<()> {
     if !cfg.enabled {
         return Ok(());
     }
@@ -475,7 +476,7 @@ pub fn load_config() -> anyhow::Result<Config> {
         config.server.grpc_port = v.parse()?;
     }
 
-    validate_replication(&config.replication)?;
+    validate_replication(&config.replication, &config.dispatch)?;
     validate_dispatch(&config.dispatch)?;
 
     Ok(config)
