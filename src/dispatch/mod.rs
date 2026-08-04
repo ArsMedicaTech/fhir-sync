@@ -23,6 +23,7 @@ use tracing::{error, info, warn};
 use crate::config::DispatchConfig;
 use crate::event::{Op, Source};
 use crate::metrics::SharedMetrics;
+use crate::replication::poller::{HistoryEvent, HistoryOp};
 
 pub mod delivery;
 
@@ -37,6 +38,38 @@ pub struct DispatchNotification {
     pub idempotency_key: String,
     pub occurred_at: DateTime<Utc>,
     pub fhir_base_url: String,
+}
+
+impl DispatchNotification {
+    pub fn from_history_event(
+        event: &HistoryEvent,
+        fhir_base_url: &str,
+        link_name: &str,
+    ) -> Self {
+        Self {
+            resource_type: event.resource_type.clone(),
+            fhir_id: event.id.clone(),
+            fhir_version_id: (!event.version_id.is_empty())
+                .then(|| event.version_id.clone()),
+            op: match event.op {
+                HistoryOp::Create | HistoryOp::Update => Op::Upsert,
+                HistoryOp::Delete => Op::Delete,
+            },
+            source: Source::FhirHistory,
+            // Opaque to consumers. Stable across redeliveries of the same
+            // version; distinct across versions.
+            idempotency_key: format!(
+                "hist:{link_name}:{}:{}:{}",
+                event.resource_type, event.id, event.version_id
+            ),
+            occurred_at: parse_rfc3339(&event.last_updated).unwrap_or_else(Utc::now),
+            fhir_base_url: fhir_base_url.trim_end_matches('/').to_string(),
+        }
+    }
+}
+
+fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
 }
 
 /// Runs the dispatch fan-out loop.
