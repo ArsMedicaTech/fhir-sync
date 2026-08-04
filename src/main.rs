@@ -18,6 +18,8 @@ pub mod metrics;
 pub mod replication;
 pub mod dispatch;
 
+mod auth;
+
 pub mod proto;
 
 

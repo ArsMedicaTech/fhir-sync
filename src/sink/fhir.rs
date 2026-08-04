@@ -16,6 +16,7 @@ use fhirbolt::model::r4b::types::{Address, ContactPoint, HumanName, Identifier, 
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
+use crate::auth::TokenProvider;
 use crate::config::{Config, FhirConfig};
 use crate::dispatch::DispatchNotification;
 use crate::domain::patient::DomainPatient;
@@ -32,16 +33,15 @@ pub async fn run(
     dispatch_tx: Option<Sender<DispatchNotification>>,
 ) -> Result<()> {
     let client = reqwest::Client::new();
-    let token = cfg
-        .fhir
-        .token_env
-        .as_ref()
-        .and_then(|key| std::env::var(key).ok());
+    let token_provider = match cfg.fhir.keycloak.as_ref() {
+        Some(kc) => Some(TokenProvider::new(kc, client.clone())?),
+        None => None,
+    };
 
     while let Some(event) = rx.recv().await {
         let key = event.idempotency_key.clone();
 
-        match sync_with_retry(&client, &cfg, token.as_deref(), &event, &metrics).await {
+        match sync_with_retry(&client, &cfg, token_provider.as_ref(), &event, &metrics).await {
             Ok(result) => {
                 metrics.inc_synced();
                 if let Some(tx) = &dispatch_tx {
@@ -100,7 +100,7 @@ fn build_dispatch_notification(
 async fn sync_with_retry(
     client: &reqwest::Client,
     cfg: &Config,
-    token: Option<&str>,
+    token_provider: Option<&TokenProvider>,
     event: &SyncEvent,
     metrics: &SharedMetrics,
 ) -> Result<FhirResult, SyncFailure> {
@@ -109,7 +109,7 @@ async fn sync_with_retry(
 
     let mut last_err = None;
     for attempt in 0..max_attempts {
-        match sync_one(client, &cfg.fhir, token, event).await {
+        match sync_one(client, &cfg.fhir, token_provider, event).await {
             Ok(res) => return Ok(res),
             Err(SyncFailure::Permanent(e)) => {
                 warn!(
@@ -209,9 +209,16 @@ fn build_put_request(
 async fn sync_one(
     client: &reqwest::Client,
     fhir_cfg: &FhirConfig,
-    token: Option<&str>,
+    token_provider: Option<&TokenProvider>,
     event: &SyncEvent,
 ) -> Result<FhirResult, SyncFailure> {
+    let token: Option<String> = match token_provider {
+        Some(tp) => Some(tp.token().await.map_err(SyncFailure::Retryable)?),
+        None => fhir_cfg
+            .token_env
+            .as_ref()
+            .and_then(|key| std::env::var(key).ok()),
+    };
     let mut patient = build_patient(&event.payload, fhir_cfg);
     if event.op == Op::Delete {
         patient.active = Some(false.into());
@@ -407,6 +414,7 @@ mod tests {
                 .to_string(),
             oscar_hin_system: "https://arsmedicatech.com/fhir/sid/oscar-hin".to_string(),
             token_env: None,
+            keycloak: None,
         }
     }
 
@@ -607,6 +615,7 @@ mod tests {
                     "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".into(),
                 oscar_hin_system: "https://arsmedicatech.com/fhir/sid/oscar-hin".into(),
                 token_env: None,
+                keycloak: None,
             },
             sync: SyncConfig {
                 checkpoint_path: "".into(),
