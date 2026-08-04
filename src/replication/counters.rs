@@ -14,6 +14,7 @@ pub struct Counters {
     suppressed: AtomicU64,
     retried: AtomicU64,
     dead_lettered: AtomicU64,
+    dispatch_dropped: AtomicU64,
 }
 
 impl Counters {
@@ -43,6 +44,10 @@ impl Counters {
 
     pub fn inc_dead_lettered(&self) {
         self.dead_lettered.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_dispatch_dropped(&self) {
+        self.dispatch_dropped.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn snapshot(&self) -> (u64, u64, u64, u64, u64, u64) {
