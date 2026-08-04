@@ -25,7 +25,10 @@ pub struct SharedState {
 }
 
 /// Entry point for the replication task set. Spawns one poller per link.
-pub async fn run(cfg: Config) -> anyhow::Result<()> {
+pub async fn run(
+    cfg: Config,
+    dispatch_tx: Option<mpsc::Sender<crate::dispatch::DispatchNotification>>,
+) -> anyhow::Result<()> {
     if !cfg.replication.enabled {
         return Ok(());
     }
@@ -79,9 +82,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         let link = link.clone();
         let source = source.clone();
         let target = target.clone();
+        let dispatch_tx = dispatch_tx.clone();
 
         handles.push(tokio::spawn(async move {
-            poller::run(client, cfg, link, source, target, state, notify).await
+            poller::run(client, cfg, link, source, target, state, notify, dispatch_tx).await
         }));
     }
 
