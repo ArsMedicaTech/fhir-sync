@@ -1,0 +1,60 @@
+oscar_enabled = false
+
+[database]
+user = "fhirsync"
+password = "fhirsyncpw"
+host = "127.0.0.1"
+port = 3316
+schema = "oscar"
+server_id = 4321
+
+[server]
+health_port = 8080
+webhook_port = 8081
+grpc_port = 50051
+
+[fhir]
+base_url = "http://hapi-a:8080/fhir"
+oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
+oscar_hin_system = "https://arsmedicatech.com/fhir/sid/oscar-hin"
+
+[sync]
+checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
+retry_max_attempts = 5
+retry_base_ms = 500
+dead_letter_path = "/var/lib/fhir-sync/dead_letter.jsonl"
+
+[replication]
+enabled = true
+state_dir = "/var/lib/fhir-sync"
+poll_interval_ms = 5000
+page_size = 100
+doorbell_port = 8082
+
+[[replication.nodes]]
+name = "clinic-a"
+base_url = "http://hapi-a:8080/fhir"
+
+[[replication.nodes]]
+name = "clinic-b"
+base_url = "http://hapi-b:8080/fhir"
+
+[[replication.links]]
+name = "referral-a-to-b"
+source = "clinic-a"
+target = "clinic-b"
+mode = "mirror"
+resources = ["Patient", "Practitioner", "Organization", "CarePlan", "ServiceRequest", "Task"]
+provenance = true
+conflict_policy = "dead_letter"
+subscription_doorbell = false
+
+[[replication.links]]
+name = "result-b-to-a"
+source = "clinic-b"
+target = "clinic-a"
+mode = "mirror"
+resources = ["Task", "DiagnosticReport"]
+provenance = true
+conflict_policy = "dead_letter"
+subscription_doorbell = false
