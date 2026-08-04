@@ -8,6 +8,7 @@ pub enum Source {
     OscarBinlog,
     Webhook,
     Grpc,
+    FhirHistory,
 }
 
 impl Source {
@@ -16,6 +17,7 @@ impl Source {
             Source::OscarBinlog => "oscar_binlog",
             Source::Webhook => "webhook",
             Source::Grpc => "grpc",
+            Source::FhirHistory => "fhir_history",
         }
     }
 }
