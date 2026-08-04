@@ -39,7 +39,7 @@ pub async fn run(
     cfg: Config,
     link: ReplicationLink,
     source_node: ReplicationNode,
-    target_node: ReplicationNode,
+    target_node: Option<ReplicationNode>,
     state: SharedState,
     poll_now: Arc<Notify>,
 ) -> anyhow::Result<()> {
@@ -62,7 +62,7 @@ pub async fn run(
             &cfg,
             &link,
             &source_node,
-            &target_node,
+            target_node.as_ref(),
             &state,
             &counters,
             &mut cp,
@@ -96,7 +96,7 @@ async fn poll_one_cycle(
     cfg: &Config,
     link: &ReplicationLink,
     source_node: &ReplicationNode,
-    target_node: &ReplicationNode,
+    target_node: Option<&ReplicationNode>,
     state: &SharedState,
     counters: &Counters,
     cp: &mut LinkCheckpoint,
@@ -149,11 +149,36 @@ async fn poll_one_cycle(
                 continue;
             }
 
-            if should_suppress(link, source_node, target_node, state, &event) {
-                counters.inc_suppressed();
+            if let Some(target_node) = target_node {
+                if should_suppress(link, source_node, target_node, state, &event) {
+                    counters.inc_suppressed();
+                    continue;
+                }
+            }
+
+            // Observe-only link: emit and advance. No target reads, no conflict
+            // resolution, no writes.
+            if target_node.is_none() {
+                if let Some(tx) = dispatch_tx {
+                    let notification = DispatchNotification::from_history_event(
+                        &event,
+                        &source_node.base_url,
+                        &link.name,
+                    );
+                    if tx.try_send(notification).is_err() {
+                        counters.inc_dispatch_dropped();
+                        warn!(
+                            "replication link {}: dispatch channel full, dropped {}/{}",
+                            link.name, event.resource_type, event.id
+                        );
+                    }
+                }
+                cp.since = event.last_updated.clone();
+                processed += 1;
                 continue;
             }
 
+            let target_node = target_node.unwrap();
             match event.op {
                 HistoryOp::Create | HistoryOp::Update => {
                     if let Some(resource) = &event.resource {
