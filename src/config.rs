@@ -441,8 +441,10 @@ pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) 
         if !names.contains(&link.source) {
             anyhow::bail!("replication link '{}' references unknown source node '{}'", link.name, link.source);
         }
-        if !names.contains(&link.target) {
-            anyhow::bail!("replication link '{}' references unknown target node '{}'", link.name, link.target);
+        if let Some(target) = &link.target {
+            if !names.contains(target) {
+                anyhow::bail!("replication link '{}' references unknown target node '{}'", link.name, target);
+            }
         }
         if matches!(link.mode, ReplicationMode::Federate) && link.federate_identifier_system.is_none() {
             anyhow::bail!("replication link '{}' uses federate mode but has no federate_identifier_system", link.name);
