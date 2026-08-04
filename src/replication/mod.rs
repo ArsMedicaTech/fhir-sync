@@ -41,9 +41,10 @@ pub async fn run(
 
     // Warm the echo map from persisted checkpoints.
     for link in &cfg.replication.links {
+        let Some(target_name) = link.target.as_deref() else { continue };
         let cp = util::load_checkpoint(&checkpoint_path(&cfg, &link.name));
         let source_node = find_node(&cfg, &link.source)?;
-        let target_node = find_node(&cfg, &link.target)?;
+        let target_node = find_node(&cfg, target_name)?;
         let mut guard = state.echo.lock().unwrap();
         for (resource_key, version) in &cp.last_versionids_seen {
             // Best-effort: for mirror the id is the same on both nodes.
@@ -64,12 +65,15 @@ pub async fn run(
                 continue;
             }
         };
-        let target = match find_node(&cfg, &link.target) {
-            Ok(n) => n,
-            Err(e) => {
-                warn!("replication: skipping link {}: {}", link.name, e);
-                continue;
-            }
+        let target = match link.target.as_deref() {
+            None => None,
+            Some(t) => match find_node(&cfg, t) {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    warn!("replication: skipping link {}: {}", link.name, e);
+                    continue;
+                }
+            },
         };
 
         doorbell_needed = doorbell_needed || link.subscription_doorbell;
