@@ -15,6 +15,8 @@ pub struct Config {
     pub debug: Option<bool>,
     #[serde(default)]
     pub replication: ReplicationConfig,
+    #[serde(default)]
+    pub dispatch: DispatchConfig,
     /// Oscar CDC pipeline (binlog source + sink + backfill). Off for
     /// replication-only deployments, which have no MySQL to tail.
     #[serde(default = "default_true")]
@@ -264,6 +266,131 @@ fn default_link_conflict_policy() -> ConflictPolicy {
     ConflictPolicy::DeadLetter
 }
 
+const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] = &["Patient"];
+const KNOWN_DISPATCH_OPS: &[&str] = &["upsert", "delete"];
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DispatchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_dispatch_dead_letter_dir")]
+    pub dead_letter_dir: String,
+    #[serde(default = "default_retry_max_attempts")]
+    pub retry_max_attempts: u32,
+    #[serde(default = "default_retry_base_ms")]
+    pub retry_base_ms: u64,
+    #[serde(default = "default_dispatch_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub consumers: Vec<DispatchConsumer>,
+}
+
+impl Default for DispatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dead_letter_dir: default_dispatch_dead_letter_dir(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            timeout_ms: default_dispatch_timeout_ms(),
+            consumers: Vec::new(),
+        }
+    }
+}
+
+fn default_dispatch_dead_letter_dir() -> String {
+    "/var/lib/fhir-sync/dispatch-dlq".to_string()
+}
+
+fn default_dispatch_timeout_ms() -> u64 {
+    10000
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DispatchConsumer {
+    pub name: String,
+    pub url: String,
+    pub secret_env: String,
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    #[serde(default)]
+    pub ops: Vec<String>,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+/// Validates the dispatch configuration. Fatal on error.
+pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
+    if !cfg.enabled {
+        return Ok(());
+    }
+
+    let mut names = std::collections::HashSet::new();
+    for consumer in &cfg.consumers {
+        if !consumer.enabled {
+            continue;
+        }
+
+        if consumer.name.trim().is_empty() {
+            anyhow::bail!("dispatch consumer has an empty name");
+        }
+        if !names.insert(consumer.name.clone()) {
+            anyhow::bail!("dispatch consumer name '{}' is duplicated", consumer.name);
+        }
+
+        let url = url::Url::parse(&consumer.url)
+            .map_err(|e| anyhow::anyhow!("dispatch consumer '{}' url '{}' is invalid: {e}", consumer.name, consumer.url))?;
+        if url.scheme() != "https"
+            && !(url.scheme() == "http"
+                && matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")))
+        {
+            anyhow::bail!(
+                "dispatch consumer '{}' url '{}' must use https (or http to localhost/127.0.0.1)",
+                consumer.name,
+                consumer.url
+            );
+        }
+
+        if consumer.secret_env.trim().is_empty() {
+            anyhow::bail!("dispatch consumer '{}' has an empty secret_env", consumer.name);
+        }
+        if std::env::var(&consumer.secret_env).is_err() {
+            anyhow::bail!(
+                "dispatch consumer '{}' secret_env '{}' is not set in the environment",
+                consumer.name,
+                consumer.secret_env
+            );
+        }
+
+        if consumer.resource_types.is_empty() {
+            anyhow::bail!("dispatch consumer '{}' has an empty resource_types list", consumer.name);
+        }
+        for rt in &consumer.resource_types {
+            if !KNOWN_DISPATCH_RESOURCE_TYPES
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case(rt))
+            {
+                anyhow::bail!(
+                    "dispatch consumer '{}' has unknown resource_type '{}'",
+                    consumer.name,
+                    rt
+                );
+            }
+        }
+
+        if consumer.ops.is_empty() {
+            anyhow::bail!("dispatch consumer '{}' has an empty ops list", consumer.name);
+        }
+        for op in &consumer.ops {
+            if !KNOWN_DISPATCH_OPS.iter().any(|k| k.eq_ignore_ascii_case(op)) {
+                anyhow::bail!("dispatch consumer '{}' has unknown op '{}'", consumer.name, op);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Validates the replication configuration (node references, duplicates,
 /// federate requirements, forbidden resource types). Fatal on error.
 pub fn validate_replication(cfg: &ReplicationConfig) -> anyhow::Result<()> {
@@ -322,6 +449,118 @@ pub fn load_config() -> anyhow::Result<Config> {
     }
 
     validate_replication(&config.replication)?;
+    validate_dispatch(&config.dispatch)?;
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_consumer(name: &str, url: &str, secret_env: &str) -> DispatchConsumer {
+        DispatchConsumer {
+            name: name.to_string(),
+            url: url.to_string(),
+            secret_env: secret_env.to_string(),
+            resource_types: vec!["Patient".to_string()],
+            ops: vec!["upsert".to_string()],
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn validate_dispatch_catches_duplicate_names() {
+        let cfg = DispatchConfig {
+            enabled: true,
+            dead_letter_dir: default_dispatch_dead_letter_dir(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            timeout_ms: default_dispatch_timeout_ms(),
+            consumers: vec![
+                make_consumer("a", "https://example.invalid/1", "D_A"),
+                make_consumer("a", "https://example.invalid/2", "D_A2"),
+            ],
+        };
+        let err = validate_dispatch(&cfg).unwrap_err().to_string();
+        assert!(err.contains("'a' is duplicated"));
+    }
+
+    #[test]
+    fn validate_dispatch_catches_http_not_localhost() {
+        let cfg = DispatchConfig {
+            enabled: true,
+            dead_letter_dir: default_dispatch_dead_letter_dir(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            timeout_ms: default_dispatch_timeout_ms(),
+            consumers: vec![make_consumer(
+                "a",
+                "http://example.invalid/hook",
+                "D_A",
+            )],
+        };
+        let err = validate_dispatch(&cfg).unwrap_err().to_string();
+        assert!(err.contains("must use https"));
+    }
+
+    #[test]
+    fn validate_dispatch_allows_http_localhost() {
+        std::env::set_var("D_LOCAL", "secret");
+        let cfg = DispatchConfig {
+            enabled: true,
+            dead_letter_dir: default_dispatch_dead_letter_dir(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            timeout_ms: default_dispatch_timeout_ms(),
+            consumers: vec![make_consumer("a", "http://localhost:3000/hook", "D_LOCAL")],
+        };
+        assert!(validate_dispatch(&cfg).is_ok());
+        std::env::remove_var("D_LOCAL");
+    }
+
+    #[test]
+    fn validate_dispatch_catches_missing_secret_env() {
+        std::env::remove_var("D_MISSING");
+        let cfg = DispatchConfig {
+            enabled: true,
+            dead_letter_dir: default_dispatch_dead_letter_dir(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            timeout_ms: default_dispatch_timeout_ms(),
+            consumers: vec![make_consumer("a", "https://example.invalid/hook", "D_MISSING")],
+        };
+        let err = validate_dispatch(&cfg).unwrap_err().to_string();
+        assert!(err.contains("not set"));
+    }
+
+    #[test]
+    fn validate_dispatch_catches_unknown_resource_type() {
+        std::env::set_var("D_X", "secret");
+        let cfg = DispatchConfig {
+            enabled: true,
+            dead_letter_dir: default_dispatch_dead_letter_dir(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            timeout_ms: default_dispatch_timeout_ms(),
+            consumers: vec![DispatchConsumer {
+                name: "a".to_string(),
+                url: "https://example.invalid/hook".to_string(),
+                secret_env: "D_X".to_string(),
+                resource_types: vec!["Foo".to_string()],
+                ops: vec!["upsert".to_string()],
+                enabled: true,
+            }],
+        };
+        let err = validate_dispatch(&cfg).unwrap_err().to_string();
+        assert!(err.contains("unknown resource_type"));
+        std::env::remove_var("D_X");
+    }
+
+    #[test]
+    fn validate_dispatch_disabled_is_noop() {
+        let cfg = DispatchConfig::default();
+        assert!(!cfg.enabled);
+        assert!(validate_dispatch(&cfg).is_ok());
+    }
 }
