@@ -219,6 +219,19 @@ pub struct ReplicationNode {
     pub name: String,
     pub base_url: String,
     pub token_env: Option<String>,
+    /// OAuth2 client-credentials token source. Takes precedence over
+    /// `token_env` when both are set.
+    #[serde(default)]
+    pub oauth: Option<NodeOAuthConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NodeOAuthConfig {
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret_env: String,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
