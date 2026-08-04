@@ -9,10 +9,14 @@ use serde_json::Value;
 use tokio::sync::Notify;
 use tracing::{info, warn};
 
+use tokio::sync::mpsc;
+
 use crate::config::{Config, ReplicationLink, ReplicationMode, ReplicationNode};
+use crate::dispatch::DispatchNotification;
 
 use super::conflict;
 use super::counters::{spawn_reporter, Counters};
+use super::token;
 use super::util::{fabric_tag, load_checkpoint, parse_etag, save_checkpoint, token_for_node, write_dead_letter, DeadLetterRecord, LinkCheckpoint};
 use super::writer::{ReplicateError, WriteResult};
 use super::{writer, SharedState};
@@ -42,6 +46,7 @@ pub async fn run(
     target_node: Option<ReplicationNode>,
     state: SharedState,
     poll_now: Arc<Notify>,
+    dispatch_tx: Option<mpsc::Sender<DispatchNotification>>,
 ) -> anyhow::Result<()> {
     let checkpoint_path = format!("{}/replication/{}/checkpoint.json", cfg.replication.state_dir, link.name);
     let dead_letter_path = format!("{}/replication/{}/dead_letter.jsonl", cfg.replication.state_dir, link.name);
@@ -53,6 +58,7 @@ pub async fn run(
         cp.since = "1900-01-01T00:00:00.000Z".to_string();
     }
 
+    let token_provider = token::TokenProvider::new(client.clone());
     let counters = Arc::new(Counters::new());
     let _reporter = spawn_reporter(link.name.clone(), counters.clone());
 
@@ -70,6 +76,8 @@ pub async fn run(
             &dead_letter_path,
             max_attempts,
             base_ms,
+            &token_provider,
+            dispatch_tx.as_ref(),
         )
         .await
         {
@@ -104,8 +112,10 @@ async fn poll_one_cycle(
     dead_letter_path: &str,
     max_attempts: u32,
     base_ms: u64,
+    token_provider: &token::TokenProvider,
+    dispatch_tx: Option<&mpsc::Sender<DispatchNotification>>,
 ) -> Result<usize> {
-    let token = token_for_node(&source_node.token_env);
+    let token = token_provider.token_for(source_node).await;
     let conflicts_path = format!("{}/replication/{}/conflicts.jsonl", cfg.replication.state_dir, link.name);
     let mut next_url = Some(build_history_url(&source_node.base_url, &cp.since, cfg.replication.page_size));
     let mut processed = 0;
