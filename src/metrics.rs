@@ -15,6 +15,7 @@ pub struct Metrics {
     synced: AtomicU64,
     retried: AtomicU64,
     dead_lettered: AtomicU64,
+    dispatch_dropped: AtomicU64,
     position: Mutex<String>,
 }
 
@@ -41,6 +42,10 @@ impl Metrics {
         self.dead_lettered.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn inc_dispatch_dropped(&self) {
+        self.dispatch_dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Records the current source position, e.g. `"mysql-bin.000002:4"`.
     pub fn set_position(&self, position: impl Into<String>) {
         if let Ok(mut p) = self.position.lock() {
@@ -48,12 +53,13 @@ impl Metrics {
         }
     }
 
-    fn snapshot(&self) -> (u64, u64, u64, u64, String) {
+    fn snapshot(&self) -> (u64, u64, u64, u64, u64, String) {
         (
             self.received.load(Ordering::Relaxed),
             self.synced.load(Ordering::Relaxed),
             self.retried.load(Ordering::Relaxed),
             self.dead_lettered.load(Ordering::Relaxed),
+            self.dispatch_dropped.load(Ordering::Relaxed),
             self.position.lock().map(|p| p.clone()).unwrap_or_default(),
         )
     }
@@ -65,10 +71,10 @@ pub fn spawn_reporter(metrics: SharedMetrics) -> tokio::task::JoinHandle<()> {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            let (received, synced, retried, dead_lettered, position) = metrics.snapshot();
+            let (received, synced, retried, dead_lettered, dispatch_dropped, position) = metrics.snapshot();
             info!(
                 "metrics: received={received} synced={synced} retried={retried} \
-                 dead_lettered={dead_lettered} position={position}"
+                 dead_lettered={dead_lettered} dispatch_dropped={dispatch_dropped} position={position}"
             );
         }
     })
