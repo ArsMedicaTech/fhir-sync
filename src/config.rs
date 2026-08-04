@@ -472,6 +472,26 @@ pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) 
         {
             anyhow::bail!("replication link '{}' may not include Provenance or AuditEvent in resources", link.name);
         }
+
+        if link.target.is_none() {
+            if link.resources.is_empty() {
+                anyhow::bail!("replication link '{}' is observe-only but has no resources", link.name);
+            }
+
+            if !dispatch.enabled {
+                anyhow::bail!("replication link '{}' is observe-only but dispatch is not enabled", link.name);
+            }
+
+            let has_consumer = dispatch.consumers.iter().any(|c| {
+                c.enabled && c.resource_types.iter().any(|rt| link.resources.iter().any(|lr| lr.eq_ignore_ascii_case(rt)))
+            });
+            if !has_consumer {
+                anyhow::bail!(
+                    "replication link '{}' is observe-only but no enabled dispatch consumer matches its resources",
+                    link.name
+                );
+            }
+        }
     }
 
     Ok(())
