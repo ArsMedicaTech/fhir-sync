@@ -16,6 +16,7 @@ pub mod checkpoint;
 pub mod backfill;
 pub mod metrics;
 pub mod replication;
+pub mod dispatch;
 
 pub mod proto;
 
@@ -39,13 +40,23 @@ async fn main() -> anyhow::Result<()> {
     // sink is the single consumer (D4). No tokio::broadcast in this phase.
     let (tx, rx) = mpsc::channel::<event::SyncEvent>(1024);
 
+    // Dispatch fan-out channel. Created only when dispatch is enabled so the
+    // sink's optional sender is never attached to a dangling receiver.
+    let (dispatch_tx, dispatch_task) = if cfg.dispatch.enabled {
+        let (dtx, drx) = mpsc::channel::<dispatch::DispatchNotification>(1024);
+        let task = tokio::spawn(dispatch::run(cfg.dispatch.clone(), drx, metrics.clone()));
+        (Some(dtx), task)
+    } else {
+        (None, never())
+    };
+
     // Sink must be draining before backfill sends anything — otherwise a
     // backfill larger than the channel capacity would block forever with
     // no consumer yet running.
     let never = || tokio::spawn(std::future::pending::<anyhow::Result<()>>());
 
     let sink_task = if cfg.oscar_enabled {
-        tokio::spawn(sink::fhir::run(cfg.clone(), rx, metrics.clone()))
+        tokio::spawn(sink::fhir::run(cfg.clone(), rx, metrics.clone(), dispatch_tx.clone()))
     } else { never() };
 
     // `--backfill` snapshot mode. Captures the pre-scan
@@ -79,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
         res = webhook_task  => handle_exit("webhook",  res),
         res = api_task      => handle_exit("api",      res),
         res = replication_task => handle_exit("replication", res),
+        res = dispatch_task => handle_exit("dispatch", res),
         _  = signal::ctrl_c() => info!("Ctrl-C received, shutting down"),
     };
 
