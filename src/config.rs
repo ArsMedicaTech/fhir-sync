@@ -92,6 +92,8 @@ pub struct FhirConfig {
     #[serde(default = "default_oscar_hin_system")]
     pub oscar_hin_system: String,
     pub token_env: Option<String>,
+    #[serde(default)]
+    pub keycloak: Option<KeycloakConfig>,
 }
 
 impl Default for FhirConfig {
@@ -101,6 +103,7 @@ impl Default for FhirConfig {
             oscar_demographic_system: default_oscar_demographic_system(),
             oscar_hin_system: default_oscar_hin_system(),
             token_env: None,
+            keycloak: None,
         }
     }
 }
@@ -115,6 +118,13 @@ fn default_oscar_demographic_system() -> String {
 
 fn default_oscar_hin_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-hin".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KeycloakConfig {
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret_env: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
