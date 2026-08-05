@@ -114,3 +114,85 @@ jobs:
           echo "=== fhir-sync logs ==="
           docker compose -f docker-compose.demo.yml logs fhir-sync
           exit 1
+      
+      - name: Wait for backfill to settle
+        run: |
+          for i in $(seq 1 36); do
+            n=$(curl -sS "http://localhost:8082/fhir/Patient?_summary=count" \
+                | jq -r '.total // 0')
+            [ "$n" -ge 7 ] && { echo "backfill settled ($n patients)"; break; }
+            sleep 5
+          done
+
+      - name: Assert fixture mappings
+        id: assert
+        run: |
+          set -uo pipefail
+          B=http://localhost:8082/fhir
+          S=https://arsmedicatech.com/fhir/sid
+          fail=0
+          check() {
+            if [ "$2" = "$3" ]; then printf '  PASS  %s\n' "$1"
+            else printf '  FAIL  %s: got %s want %s\n' "$1" "$2" "$3"; fail=1; fi
+          }
+          q() { curl -sS "$B/$1"; }
+
+          # --- Patient -----------------------------------------------------
+          check "102 sex=O maps to gender=other" \
+            "$(q "Patient?identifier=$S/oscar-demographic|102" | jq -r '.entry[0].resource.gender')" other
+          check "103 NULL month yields no birthDate" \
+            "$(q "Patient?identifier=$S/oscar-demographic|103" | jq -r '.entry[0].resource.birthDate // "absent"')" absent
+          check "104 patient_status=DE yields deceasedBoolean" \
+            "$(q "Patient?identifier=$S/oscar-demographic|104" | jq -r '.entry[0].resource.deceasedBoolean // false')" true
+          check "105 patient_status=IN yields active=false" \
+            "$(q "Patient?identifier=$S/oscar-demographic|105" | jq -r '.entry[0].resource.active')" false
+          check "101 emits both addresses" \
+            "$(q "Patient?identifier=$S/oscar-demographic|101" | jq -r '.entry[0].resource.address | length')" 2
+          check "106 merged yields replaced-by link" \
+            "$(q "Patient?identifier=$S/oscar-demographic|106" | jq -r '.entry[0].resource.link[0].type // "none"')" replaced-by
+          check "107 sparse row still emits a Patient" \
+            "$(q "Patient?identifier=$S/oscar-demographic|107&_summary=count" | jq -r '.total')" 1
+
+          # --- Practitioner ------------------------------------------------
+          check "system actor -1 is never synced" \
+            "$(q "Practitioner?identifier=$S/oscar-provider|-1&_summary=count" | jq -r '.total')" 0
+          check "100003 status=0 yields active=false" \
+            "$(q "Practitioner?identifier=$S/oscar-provider|100003" | jq -r '.entry[0].resource.active')" false
+          check "100002 has exactly one identifier" \
+            "$(q "Practitioner?identifier=$S/oscar-provider|100002" | jq -r '.entry[0].resource.identifier | length')" 1
+
+          # --- Appointment -------------------------------------------------
+          check "blocked time (demographic_no=0) is not an Appointment" \
+            "$(q "Appointment?_summary=count" | jq -r '.total')" 8
+
+          exit $fail
+
+      - name: Assert expected dead letters
+        run: |
+          set -uo pipefail
+          dl=$(docker compose -f docker-compose.demo.yml exec -T fhir-sync \
+                 cat /var/lib/fhir-sync/dead_letter.jsonl 2>/dev/null || true)
+          fail=0
+          want() {
+            if printf '%s' "$dl" | grep -q "$1"; then printf '  PASS  %s\n' "$2"
+            else printf '  FAIL  expected dead letter: %s\n' "$2"; fail=1; fi
+          }
+          want unmapped_appointment_status "status 'a' dead-letters"
+          want nonexistent_local_time      "DST spring-forward dead-letters"
+          # PHI must never reach the DLQ
+          if printf '%s' "$dl" | grep -qiE 'Whitfield|Adeyemi|Tremblay|9123456'; then
+            echo "  FAIL  dead letter contains PHI"; fail=1
+          else
+            echo "  PASS  dead letters contain no PHI"
+          fi
+          exit $fail
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.demo.yml logs fhir-sync
+          curl -sS "http://localhost:8082/fhir/Patient?_summary=count" | jq .
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.demo.yml down -v
