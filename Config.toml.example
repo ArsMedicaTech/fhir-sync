@@ -13,8 +13,11 @@ grpc_port = 50051
 
 [fhir]
 base_url = "http://localhost:8082/fhir"
-oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
-oscar_hin_system = "https://arsmedicatech.com/fhir/sid/oscar-hin"
+oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic"
+oscar_provider_system = "https://arsmedicatech.com/fhir/sid/oscar-provider"
+oscar_appointment_system = "https://arsmedicatech.com/fhir/sid/oscar-appointment"
+bc_phn_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id"
+bc_msp_practitioner_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"
 # token_env = "FHIR_SYNC_TOKEN"
 
 [sync]
