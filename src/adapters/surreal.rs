@@ -1,7 +1,7 @@
 use prost::Message as _; // Bring the trait into scope for method resolution
 
 use crate::proto::google::fhir::proto::r5::core::Patient as ProtoPatient;
-use crate::domain::patient::DomainPatient;
+use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatient};
 
 fn example() {
     let domain_obj = DomainPatient {
@@ -9,7 +9,16 @@ fn example() {
         first_name: Some("Jane".into()),
         last_name:  Some("Doe".into()),
         date_of_birth: Some("1990-02-20".into()),
-        location: Some(("Vancouver".into(), "BC".into(), "CA".into(), "V5K0A1".into())),
+        addresses: vec![DomainAddress {
+            line: Some("123 Main St".into()),
+            city: Some("Vancouver".into()),
+            province: Some("BC".into()),
+            postal: Some("V5K0A1".into()),
+            use_: AddressUse::Home,
+            kind: AddressKind::Postal,
+        }],
+        patient_status: None,
+        merged_to: None,
         sex: Some("female".into()),
         phone: Some("+1-604-123-4567".into()),
         email: Some("jane.doe@example.com".into()),

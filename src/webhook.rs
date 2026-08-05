@@ -1,6 +1,7 @@
 use axum::{Json, Router, routing::post};
-use crate::domain::patient::DomainPatient;
-use crate::event::{Op, ResourceType, Source, SyncEvent};
+use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatient};
+use crate::domain::resource::DomainResource;
+use crate::event::{Op, Source, SyncEvent};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::extract::Extension;
@@ -18,15 +19,12 @@ async fn handle_upsert_internal(
     tx: tokio::sync::mpsc::Sender<SyncEvent>,
     patient: DomainPatient,
 ) -> StatusCode {
-    let idempotency_key = format!("webhook:demographic:{}", patient.demographic_no);
-    let event = SyncEvent {
-        source: Source::Webhook,
-        op: Op::Upsert,
-        resource_type: ResourceType::Patient,
-        idempotency_key,
-        payload: patient,
-        occurred_at: chrono::Utc::now(),
-    };
+    let event = SyncEvent::new(
+        Source::Webhook,
+        Op::Upsert,
+        DomainResource::Patient(patient),
+        chrono::Utc::now(),
+    );
 
     match tx.send(event).await {
         Ok(()) => StatusCode::OK,
@@ -59,7 +57,16 @@ mod tests {
             first_name: Some("John".to_string()),
             last_name: Some("Doe".to_string()),
             date_of_birth: Some("1990-01-01".to_string()),
-            location: Some(("Toronto".to_string(), "ON".to_string(), "Canada".to_string(), "M5V1A1".to_string())),
+            addresses: vec![DomainAddress {
+                line: Some("123 Main St".to_string()),
+                city: Some("Toronto".to_string()),
+                province: Some("ON".to_string()),
+                postal: Some("M5V1A1".to_string()),
+                use_: AddressUse::Home,
+                kind: AddressKind::Postal,
+            }],
+            patient_status: None,
+            merged_to: None,
             sex: Some("male".to_string()),
             phone: Some("+1-555-123-4567".to_string()),
             email: Some("john.doe@example.com".to_string()),
@@ -93,7 +100,9 @@ mod tests {
             first_name: None,
             last_name: None,
             date_of_birth: None,
-            location: None,
+            addresses: Vec::new(),
+            patient_status: None,
+            merged_to: None,
             sex: None,
             phone: None,
             email: None,
@@ -128,7 +137,9 @@ mod tests {
             first_name: None,
             last_name: None,
             date_of_birth: None,
-            location: None,
+            addresses: Vec::new(),
+            patient_status: None,
+            merged_to: None,
             sex: None,
             phone: None,
             email: None,
