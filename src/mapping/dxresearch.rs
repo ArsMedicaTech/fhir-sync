@@ -104,7 +104,16 @@ pub fn row_to_domain_condition(change: &RowChange, columns: &ColumnMap) -> Optio
     let coding_system = lookup(change, columns, "coding_system").map(str::to_string);
     let status = lookup(change, columns, "status")?;
     let start_date = lookup(change, columns, "start_date").map(str::to_string);
-    let provider_no = lookup(change, columns, "providerNo").map(str::to_string);
+
+    let mut provider_no = lookup(change, columns, "providerNo").map(str::to_string);
+    // D5: '-1' is Oscar's system actor and is never synced as a Practitioner.
+    // Emitting it as `recorder` produces an unsatisfiable conditional
+    // reference (HAPI-1091). Mirror casemgmt_note.rs:59-62.
+    if provider_no.as_deref() == Some("-1") {
+        warn!("dxresearch mapping: provider_no='-1' (system actor) for dxresearch_no={dxresearch_id}; recorder omitted");
+        provider_no = None;
+    }
+    
     let update_date = lookup(change, columns, "update_date").map(str::to_string);
 
     let (clinical_status, verification_status) = match status {
