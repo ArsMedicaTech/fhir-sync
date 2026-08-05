@@ -32,6 +32,7 @@ services:
       --server-id=1
     volumes:
       - ./demo/seed_oscar.sql:/docker-entrypoint-initdb.d/seed_oscar.sql:ro
+      - ./demo/seed_oscar_fixtures.sql:/docker-entrypoint-initdb.d/20_fixtures.sql:ro
     ports:
       # Conflicts with Oscar EMR DB.
       - "3317:3306"
