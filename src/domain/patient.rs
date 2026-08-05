@@ -52,6 +52,7 @@ pub struct DomainPatient {
     pub first_name:    Option<String>,
     pub last_name:     Option<String>,
     pub date_of_birth: Option<String>, // ISO "YYYY-MM-DD"
+    #[serde(default)]
     pub addresses:     Vec<DomainAddress>,
     pub sex:           Option<String>,
     pub phone:         Option<String>,
