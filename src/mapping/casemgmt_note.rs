@@ -113,6 +113,7 @@ pub fn row_to_casemgmt_note_resources(
         archived,
         note,
         links,
+        has_encounter: resolve_class(&encounter).is_some() && !is_administrative_only(&encounter),
     };
 
     let note_id_for_info = doc_ref.note_id.clone();

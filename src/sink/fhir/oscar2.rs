@@ -440,8 +440,7 @@ fn build_document_reference(
         ..Default::default()
     });
 
-    let is_admin = doc.encounter_type.as_deref() == Some("encounter without client");
-    if !is_admin {
+    if doc.has_encounter {
         let note_id_value = doc.uuid.as_deref().unwrap_or(&doc.note_id);
         dr.context = Some(DocumentReferenceContext {
             encounter: vec![encounter_ref(fhir_cfg, note_id_value)],

@@ -23,4 +23,9 @@ pub struct DomainDocumentReference {
     pub archived: bool,
     pub note: String,
     pub links: Vec<NoteLink>,
+    /// Whether this note has a corresponding Encounter. `false` both for
+    /// administrative notes ("encounter without client") and for any note
+    /// whose encounter_type failed to resolve a class (dead-lettered) —
+    /// in neither case does an Encounter exist to reference.
+    pub has_encounter: bool,
 }
