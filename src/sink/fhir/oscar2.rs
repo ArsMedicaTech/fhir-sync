@@ -428,11 +428,11 @@ fn build_document_reference(
 
     let encoded = Base64::encode_string(doc.note.as_bytes());
     dr.content.push(DocumentReferenceContent {
-        attachment: Some(Box::new(Attachment {
+        attachment: Box::new(Attachment {
             content_type: Some("text/plain".into()),
             data: Some(encoded.into()),
             ..Default::default()
-        })),
+        }),
         ..Default::default()
     });
 
