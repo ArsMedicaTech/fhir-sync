@@ -34,6 +34,9 @@ pub struct OscarConfig {
     /// (appointments, provider schedules). See chrono-tz. Required when
     /// `oscar_enabled` is `true`.
     pub timezone: Option<String>,
+    /// Optional region used to filter the `diagnosticcode` startup cache.
+    #[serde(default)]
+    pub region: Option<String>,
     /// Config overrides for `appointment.status` codes not covered by the
     /// stock mapping (the `a`–`e` custom codes). Maps the raw Oscar code to
     /// a FHIR `Appointment.status` value (e.g. "booked").
