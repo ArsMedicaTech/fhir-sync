@@ -295,7 +295,7 @@ async fn sync_patient(
         .context("serializing FHIR Patient")
         .map_err(SyncFailure::Permanent)?;
 
-    let mut req = build_put_request(client, fhir_cfg, token.as_deref(), event).body(body);
+    let req = build_put_request(client, fhir_cfg, token.as_deref(), event).body(body);
 
     let resp = req
         .send()
@@ -371,7 +371,7 @@ async fn sync_practitioner(
         .context("serializing FHIR Practitioner")
         .map_err(SyncFailure::Permanent)?;
 
-    let mut req = build_put_request(client, fhir_cfg, token.as_deref(), event).body(body);
+    let req = build_put_request(client, fhir_cfg, token.as_deref(), event).body(body);
 
     let resp = req
         .send()
