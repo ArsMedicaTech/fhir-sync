@@ -28,6 +28,7 @@ use crate::checkpoint::{self, Checkpoint};
 use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
+use crate::mapping::appointment::row_to_domain_appointment;
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
 use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
@@ -36,6 +37,7 @@ use crate::sources::{RowChange, RowOp, SourcePosition, TableRef};
 const DEMOGRAPHIC_TABLE: &str = "demographic";
 const DEMOGRAPHIC_MERGED_TABLE: &str = "demographic_merged";
 const PROVIDER_TABLE: &str = "provider";
+const APPOINTMENT_TABLE: &str = "appointment";
 const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
 const READ_ERROR_BACKOFF_MS: u64 = 100;
 
@@ -60,6 +62,10 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
     column_maps.insert(
         PROVIDER_TABLE.to_string(),
         resolve_column_map_for_table(&db, PROVIDER_TABLE).await?,
+    );
+    column_maps.insert(
+        APPOINTMENT_TABLE.to_string(),
+        resolve_column_map_for_table(&db, APPOINTMENT_TABLE).await?,
     );
 
     let (mut current_filename, start_position) = resolve_start_position(&cfg).await?;
@@ -304,6 +310,7 @@ async fn emit_row(
         DEMOGRAPHIC_TABLE => row_to_domain_patient(&change, columns).map(DomainResource::Patient),
         DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns).map(DomainResource::Patient),
         PROVIDER_TABLE => row_to_domain_practitioner(&change, columns).map(DomainResource::Practitioner),
+        APPOINTMENT_TABLE => row_to_domain_appointment(&change, columns).map(DomainResource::Appointment),
         _ => return true,
     };
 
@@ -327,7 +334,8 @@ fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str)
         if t.schema == schema
             && (t.table == DEMOGRAPHIC_TABLE
                 || t.table == DEMOGRAPHIC_MERGED_TABLE
-                || t.table == PROVIDER_TABLE)
+                || t.table == PROVIDER_TABLE
+                || t.table == APPOINTMENT_TABLE)
         {
             Some(t.table.clone())
         } else {
@@ -454,10 +462,18 @@ mod tests {
                 table: "provider".to_string(),
             },
         );
+        tables.insert(
+            45,
+            TableRef {
+                schema: "oscar".to_string(),
+                table: "appointment".to_string(),
+            },
+        );
 
         assert_eq!(is_target_table(&tables, 42, "oscar").as_deref(), Some("demographic"));
         assert_eq!(is_target_table(&tables, 43, "oscar").as_deref(), Some("demographic_merged"));
         assert_eq!(is_target_table(&tables, 44, "oscar").as_deref(), Some("provider"));
+        assert_eq!(is_target_table(&tables, 45, "oscar").as_deref(), Some("appointment"));
         assert!(is_target_table(&tables, 42, "other_schema").is_none());
         assert!(is_target_table(&tables, 999, "oscar").is_none()); // unknown table_id (F2)
     }
