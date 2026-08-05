@@ -31,7 +31,8 @@ services:
       --binlog-row-image=FULL
       --server-id=1
     volumes:
-      - ./demo/seed_oscar.sql:/docker-entrypoint-initdb.d/seed_oscar.sql:ro
+      - ./demo/seed_oscar.sql:/docker-entrypoint-initdb.d/10_seed_oscar.sql:ro
+      - ./demo/15_oscar_schema.sql:/docker-entrypoint-initdb.d/15_oscar_schema.sql:ro
       - ./demo/seed_oscar_fixtures.sql:/docker-entrypoint-initdb.d/20_fixtures.sql:ro
     ports:
       # Conflicts with Oscar EMR DB.
