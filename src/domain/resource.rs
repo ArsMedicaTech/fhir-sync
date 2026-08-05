@@ -1,4 +1,7 @@
 use crate::domain::appointment::DomainAppointment;
+use crate::domain::condition::{DomainCondition, DomainFamilyMemberHistory};
+use crate::domain::document_reference::DomainDocumentReference;
+use crate::domain::encounter::DomainEncounter;
 use crate::domain::patient::DomainPatient;
 use crate::domain::practitioner::DomainPractitioner;
 use crate::event::ResourceType;
@@ -9,6 +12,10 @@ pub enum DomainResource {
     Patient(DomainPatient),
     Practitioner(DomainPractitioner),
     Appointment(DomainAppointment),
+    Encounter(DomainEncounter),
+    DocumentReference(DomainDocumentReference),
+    Condition(DomainCondition),
+    FamilyMemberHistory(DomainFamilyMemberHistory),
 }
 
 impl DomainResource {
@@ -18,6 +25,10 @@ impl DomainResource {
             DomainResource::Patient(_) => ResourceType::Patient,
             DomainResource::Practitioner(_) => ResourceType::Practitioner,
             DomainResource::Appointment(_) => ResourceType::Appointment,
+            DomainResource::Encounter(_) => ResourceType::Encounter,
+            DomainResource::DocumentReference(_) => ResourceType::DocumentReference,
+            DomainResource::Condition(_) => ResourceType::Condition,
+            DomainResource::FamilyMemberHistory(_) => ResourceType::FamilyMemberHistory,
         }
     }
 
@@ -28,6 +39,10 @@ impl DomainResource {
             DomainResource::Patient(p) => &p.demographic_no,
             DomainResource::Practitioner(p) => &p.provider_no,
             DomainResource::Appointment(a) => &a.appointment_no,
+            DomainResource::Encounter(e) => e.uuid.as_deref().unwrap_or(&e.note_id),
+            DomainResource::DocumentReference(d) => d.uuid.as_deref().unwrap_or(&d.note_id),
+            DomainResource::Condition(c) => &c.source_id,
+            DomainResource::FamilyMemberHistory(f) => &f.note_id,
         }
     }
 
@@ -37,6 +52,13 @@ impl DomainResource {
             DomainResource::Patient(_) => "demographic",
             DomainResource::Practitioner(_) => "provider",
             DomainResource::Appointment(_) => "appointment",
+            DomainResource::Encounter(_) => "casemgmt_note",
+            DomainResource::DocumentReference(_) => "casemgmt_note",
+            DomainResource::Condition(c) => match c.source_table.as_str() {
+                "dxresearch" => "dxresearch",
+                _ => "casemgmt_note",
+            },
+            DomainResource::FamilyMemberHistory(_) => "casemgmt_note",
         }
     }
 }
