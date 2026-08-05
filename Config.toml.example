@@ -20,6 +20,9 @@ bc_phn_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-he
 bc_msp_practitioner_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"
 # token_env = "FHIR_SYNC_TOKEN"
 
+[oscar]
+timezone = "America/Vancouver"
+
 [sync]
 checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
 retry_max_attempts = 5
