@@ -7,6 +7,11 @@ schema = "oscar"
 # Must differ from the mariadb service's --server-id=1 (F12, E2).
 server_id = 4321
 
+[oscar]
+# Oscar stores naive local wall-clock in DATE/TIME columns; FHIR `instant`
+# needs an offset. Never inferred from the container TZ or the host clock.
+timezone = "America/Vancouver"
+
 [server]
 health_port = 8080
 webhook_port = 8081
