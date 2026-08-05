@@ -185,6 +185,14 @@ enum SyncFailure {
     Permanent(anyhow::Error),
 }
 
+impl std::fmt::Display for SyncFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyncFailure::Retryable(e) | SyncFailure::Permanent(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 /// The HAPI-assigned identifiers captured from a successful conditional PUT.
 #[derive(Debug)]
 struct FhirResult {
