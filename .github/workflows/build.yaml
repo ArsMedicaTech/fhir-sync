@@ -103,6 +103,10 @@ jobs:
       - name: Dump container logs
         if: failure()
         run: docker compose -f docker-compose.demo.yml logs --no-color
+      
+      - name: Backfill pre-existing rows
+        run: |
+          docker compose -f docker-compose.demo.yml run --rm fhir-sync --backfill
 
       - name: Assert the patient reached HAPI
         run: |
