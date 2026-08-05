@@ -46,7 +46,7 @@ services:
   # Second, throwaway HAPI instance for the demo — never fhir.synapticl.com
   # (spec §6 Testing Notes).
   hapi:
-    image: hapiproject/hapi:v8.10.0
+    image: hapiproject/hapi:v8.10.0-3
     ports:
       - "8082:8080"
 
