@@ -4,33 +4,35 @@
 //! as the checkpoint immediately, so the streaming run that follows résumes
 //! from that position rather than "now" — nothing written during the scan
 //! is missed, and nothing already covered by the snapshot is re-read.
-//! Batch-SELECTs the entire `demographic` table through the same sink path
-//! as live CDC (`row_to_domain_patient` -> `SyncEvent` -> conditional PUT),
+//! Batch-SELECTs the `demographic` and `provider` tables through the same
+//! sink path as live CDC (`row_to_*` -> `SyncEvent` -> conditional PUT),
 //! so it is idempotent and safe to re-run (spec acceptance: running twice
 //! changes nothing).
 
 use anyhow::{Context, Result};
-use mysql_async::{prelude::*, Row, Value};
+use mysql_async::{prelude::*, Conn, Row, Value};
 use tokio::sync::mpsc::Sender;
 use tracing::{info, warn};
 
 use crate::checkpoint::{self, Checkpoint};
-use crate::config::Config;
+use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
+use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
-use crate::sources::mariadb_binlog;
+use crate::sources::mariadb_binlog::{self, resolve_column_map_for_table};
 use crate::sources::{RowChange, RowOp, SourcePosition};
 
 const DEMOGRAPHIC_TABLE: &str = "demographic";
+const PROVIDER_TABLE: &str = "provider";
 const BATCH_SIZE: u64 = 500;
 
-/// Runs one backfill pass over `demographic`, sending every row through
-/// `tx` as an `Upsert` `SyncEvent`. Returns the number of patients sent.
+/// Runs one backfill pass over `demographic` then `provider`, sending every
+/// row through `tx` as an `Upsert` `SyncEvent`. Returns the total number of
+/// resources sent.
 pub async fn run(
     cfg: &Config,
-    columns: &ColumnMap,
     tx: &Sender<SyncEvent>,
     metrics: &SharedMetrics,
 ) -> Result<usize> {
@@ -49,6 +51,9 @@ pub async fn run(
         },
     )?;
 
+    let demo_columns = resolve_column_map_for_table(db, DEMOGRAPHIC_TABLE).await?;
+    let provider_columns = resolve_column_map_for_table(db, PROVIDER_TABLE).await?;
+
     let url = format!(
         "mysql://{}:{}@{}:{}/{}",
         db.user, db.password, db.host, db.port, db.schema
@@ -59,17 +64,68 @@ pub async fn run(
         .await
         .context("connecting for backfill scan")?;
 
+    let mut total = 0usize;
+
+    total += scan_table(
+        &mut conn,
+        db,
+        DEMOGRAPHIC_TABLE,
+        "demographic_no",
+        &demo_columns,
+        tx,
+        metrics,
+        patient_mapper,
+    )
+    .await?;
+
+    total += scan_table(
+        &mut conn,
+        db,
+        PROVIDER_TABLE,
+        "provider_no",
+        &provider_columns,
+        tx,
+        metrics,
+        practitioner_mapper,
+    )
+    .await?;
+
+    drop(conn);
+    let _ = pool.disconnect().await;
+
+    info!("backfill: complete, {total} resources sent to sink");
+    Ok(total)
+}
+
+fn patient_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
+    row_to_domain_patient(change, columns).map(DomainResource::Patient)
+}
+
+fn practitioner_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
+    row_to_domain_practitioner(change, columns).map(DomainResource::Practitioner)
+}
+
+async fn scan_table(
+    conn: &mut Conn,
+    db: &DatabaseConfig,
+    table: &str,
+    order_col: &str,
+    columns: &ColumnMap,
+    tx: &Sender<SyncEvent>,
+    metrics: &SharedMetrics,
+    mapper: fn(&RowChange, &ColumnMap) -> Option<DomainResource>,
+) -> Result<usize> {
     let mut offset: u64 = 0;
     let mut total = 0usize;
 
     loop {
         let sql = format!(
-            "SELECT * FROM {DEMOGRAPHIC_TABLE} ORDER BY demographic_no LIMIT {BATCH_SIZE} OFFSET {offset}"
+            "SELECT * FROM {table} ORDER BY {order_col} LIMIT {BATCH_SIZE} OFFSET {offset}"
         );
         let rows: Vec<Row> = conn
             .query(sql)
             .await
-            .context("scanning demographic batch")?;
+            .with_context(|| format!("scanning {table} batch"))?;
 
         if rows.is_empty() {
             break;
@@ -86,7 +142,7 @@ pub async fn run(
 
             let change = RowChange {
                 schema: db.schema.clone(),
-                table: DEMOGRAPHIC_TABLE.to_string(),
+                table: table.to_string(),
                 op: RowOp::Insert,
                 after,
                 position: SourcePosition::FilePos {
@@ -95,22 +151,20 @@ pub async fn run(
                 },
             };
 
-            let Some(patient) = row_to_domain_patient(&change, columns) else {
+            let Some(resource) = mapper(&change, columns) else {
                 continue;
             };
 
             let sync_event = SyncEvent::new(
-                EventSource::OscarBackfill { table: DEMOGRAPHIC_TABLE.to_string() },
+                EventSource::OscarBackfill { table: table.to_string() },
                 Op::Upsert,
-                DomainResource::Patient(patient),
+                resource,
                 chrono::Utc::now(),
             );
 
             metrics.inc_received();
             if tx.send(sync_event).await.is_err() {
                 warn!("backfill: sink channel closed mid-scan, stopping early");
-                drop(conn);
-                let _ = pool.disconnect().await;
                 return Ok(total);
             }
             total += 1;
@@ -119,10 +173,6 @@ pub async fn run(
         offset += batch_len;
     }
 
-    drop(conn);
-    let _ = pool.disconnect().await;
-
-    info!("backfill: complete, {total} patients sent to sink");
     Ok(total)
 }
 

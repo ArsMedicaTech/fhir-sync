@@ -101,17 +101,17 @@ impl SyncEvent {
     /// Idempotency-key convention:
     /// - `oscar:{table}:{source_id}` for streaming
     /// - `oscar:{table}:backfill:{source_id}` for backfill
-    /// - `webhook:{source_id}`, `grpc:{source_id}`, `fhir_history:{source_id}`
-    ///   for other sources.
+    /// - `webhook:{source_table}:{source_id}`, `grpc:{source_table}:{source_id}`,
+    ///   `fhir_history:{source_table}:{source_id}` for other sources.
     pub fn new(source: Source, op: Op, payload: DomainResource, occurred_at: DateTime<Utc>) -> Self {
         let resource_type = payload.resource_type();
         let source_id = payload.source_id();
         let idempotency_key = match &source {
             Source::OscarBinlog { table } => format!("oscar:{table}:{source_id}"),
             Source::OscarBackfill { table } => format!("oscar:{table}:backfill:{source_id}"),
-            Source::Webhook => format!("webhook:{source_id}"),
-            Source::Grpc => format!("grpc:{source_id}"),
-            Source::FhirHistory => format!("fhir_history:{source_id}"),
+            Source::Webhook => format!("webhook:{}:{source_id}", payload.source_table()),
+            Source::Grpc => format!("grpc:{}:{source_id}", payload.source_table()),
+            Source::FhirHistory => format!("fhir_history:{}:{source_id}", payload.source_table()),
         };
 
         Self {
