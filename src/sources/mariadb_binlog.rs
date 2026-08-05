@@ -26,12 +26,16 @@ use tracing::{error, info, warn};
 
 use crate::checkpoint::{self, Checkpoint};
 use crate::config::{Config, DatabaseConfig};
-use crate::event::{Op, ResourceType, Source as EventSource, SyncEvent};
-use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
+use crate::domain::resource::DomainResource;
+use crate::event::{Op, Source as EventSource, SyncEvent};
+use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
+use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
 use crate::sources::{RowChange, RowOp, SourcePosition, TableRef};
 
 const DEMOGRAPHIC_TABLE: &str = "demographic";
+const DEMOGRAPHIC_MERGED_TABLE: &str = "demographic_merged";
+const PROVIDER_TABLE: &str = "provider";
 const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
 const READ_ERROR_BACKOFF_MS: u64 = 100;
 
@@ -44,7 +48,20 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
         bail!("database.server_id must be non-zero and != Oscar's server-id (F12)");
     }
 
-    let columns = resolve_column_map(&db).await?;
+    let mut column_maps = HashMap::new();
+    column_maps.insert(
+        DEMOGRAPHIC_TABLE.to_string(),
+        resolve_column_map_for_table(&db, DEMOGRAPHIC_TABLE).await?,
+    );
+    column_maps.insert(
+        DEMOGRAPHIC_MERGED_TABLE.to_string(),
+        resolve_column_map_for_table(&db, DEMOGRAPHIC_MERGED_TABLE).await?,
+    );
+    column_maps.insert(
+        PROVIDER_TABLE.to_string(),
+        resolve_column_map_for_table(&db, PROVIDER_TABLE).await?,
+    );
+
     let (mut current_filename, start_position) = resolve_start_position(&cfg).await?;
 
     let url = format!("mysql://{}:{}@{}:{}", db.user, db.password, db.host, db.port);
@@ -105,11 +122,12 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                 );
             }
             EventData::WriteRows(write) => {
-                if is_target_table(&tables, write.table_id, &db.schema) {
+                if let Some(table) = is_target_table(&tables, write.table_id, &db.schema) {
                     for row in &write.rows {
                         channel_closed |= !emit_row(
                             &db.schema,
-                            &columns,
+                            &table,
+                            &column_maps,
                             &tx,
                             &metrics,
                             &row.column_values,
@@ -123,12 +141,13 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                 }
             }
             EventData::UpdateRows(update) => {
-                if is_target_table(&tables, update.table_id, &db.schema) {
+                if let Some(table) = is_target_table(&tables, update.table_id, &db.schema) {
                     // After-image only (F6): the sink treats this as a full upsert.
                     for (_before, after) in &update.rows {
                         channel_closed |= !emit_row(
                             &db.schema,
-                            &columns,
+                            &table,
+                            &column_maps,
                             &tx,
                             &metrics,
                             &after.column_values,
@@ -142,13 +161,14 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                 }
             }
             EventData::DeleteRows(delete) => {
-                if is_target_table(&tables, delete.table_id, &db.schema) {
+                if let Some(table) = is_target_table(&tables, delete.table_id, &db.schema) {
                     // MariaDB is configured with binlog_row_image=FULL (E2), so the
                     // before-image carries every column, including demographic_no.
                     for row in &delete.rows {
                         channel_closed |= !emit_row(
                             &db.schema,
-                            &columns,
+                            &table,
+                            &column_maps,
                             &tx,
                             &metrics,
                             &row.column_values,
@@ -249,10 +269,11 @@ pub(crate) async fn capture_binlog_position(db: &DatabaseConfig) -> Result<(Stri
 /// Maps one row's column values to a `DomainPatient` and sends the
 /// resulting `SyncEvent`. Returns `false` if the sink channel has closed
 /// (signal to stop the listener); `true` otherwise, including when the row
-/// is skipped because it has no `demographic_no`.
+/// is skipped because it has no natural key.
 async fn emit_row(
     schema: &str,
-    columns: &ColumnMap,
+    table: &str,
+    column_maps: &HashMap<String, ColumnMap>,
     tx: &Sender<SyncEvent>,
     metrics: &SharedMetrics,
     values: &[ColumnValue],
@@ -261,11 +282,16 @@ async fn emit_row(
     file: &str,
     pos: u32,
 ) -> bool {
+    let Some(columns) = column_maps.get(table) else {
+        warn!("mariadb_binlog: no column map resolved for {table}");
+        return true;
+    };
+
     let after: Vec<Option<String>> = values.iter().map(column_value_to_string).collect();
 
     let change = RowChange {
         schema: schema.to_string(),
-        table: DEMOGRAPHIC_TABLE.to_string(),
+        table: table.to_string(),
         op: row_op,
         after,
         position: SourcePosition::FilePos {
@@ -274,32 +300,40 @@ async fn emit_row(
         },
     };
 
-    let Some(patient) = row_to_domain_patient(&change, columns) else {
+    let resource = match table {
+        DEMOGRAPHIC_TABLE => row_to_domain_patient(&change, columns).map(DomainResource::Patient),
+        DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns).map(DomainResource::Patient),
+        PROVIDER_TABLE => row_to_domain_practitioner(&change, columns).map(DomainResource::Practitioner),
+        _ => return true,
+    };
+
+    let Some(resource) = resource else {
         return true;
     };
 
-    let idempotency_key = format!(
-        "oscar:demographic:{}:{}:{}",
-        patient.demographic_no, file, pos
+    let sync_event = SyncEvent::new(
+        EventSource::OscarBinlog { table: table.to_string() },
+        sync_op,
+        resource,
+        chrono::Utc::now(),
     );
-    let sync_event = SyncEvent {
-        source: EventSource::OscarBinlog,
-        op: sync_op,
-        resource_type: ResourceType::Patient,
-        idempotency_key,
-        payload: patient,
-        occurred_at: chrono::Utc::now(),
-    };
 
     metrics.inc_received();
     tx.send(sync_event).await.is_ok()
 }
 
-fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str) -> bool {
-    tables
-        .get(&table_id)
-        .map(|t| t.schema == schema && t.table == DEMOGRAPHIC_TABLE)
-        .unwrap_or(false)
+fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str) -> Option<String> {
+    tables.get(&table_id).and_then(|t| {
+        if t.schema == schema
+            && (t.table == DEMOGRAPHIC_TABLE
+                || t.table == DEMOGRAPHIC_MERGED_TABLE
+                || t.table == PROVIDER_TABLE)
+        {
+            Some(t.table.clone())
+        } else {
+            None
+        }
+    })
 }
 
 /// Converts a decoded column value to its string form for downstream
@@ -331,10 +365,18 @@ fn column_value_to_string(value: &ColumnValue) -> Option<String> {
     }
 }
 
-/// Resolves `demographic` column name -> ordinal index via
-/// `information_schema.columns` (D3). Self-healing across Oscar schema
-/// variants; never hand-maintain a column list.
+/// Resolves a single Oscar table's column name -> ordinal index.
+/// Backwards-compatible alias for the original single-table call.
 pub(crate) async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap> {
+    resolve_column_map_for_table(db, DEMOGRAPHIC_TABLE).await
+}
+
+/// Resolves `table` column name -> ordinal index via `information_schema.columns` (D3).
+/// Self-healing across Oscar schema variants; never hand-maintain a column list.
+pub(crate) async fn resolve_column_map_for_table(
+    db: &DatabaseConfig,
+    table: &str,
+) -> Result<ColumnMap> {
     use mysql_async::prelude::*;
 
     let url = format!(
@@ -346,17 +388,17 @@ pub(crate) async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap>
     let mut conn = pool
         .get_conn()
         .await
-        .context("connecting to resolve demographic column map")?;
+        .with_context(|| format!("connecting to resolve {table} column map"))?;
 
     let rows: Vec<(String, u32)> = conn
         .exec(
             "SELECT column_name, ordinal_position FROM information_schema.columns \
              WHERE table_schema = :schema AND table_name = :table \
              ORDER BY ordinal_position",
-            params! { "schema" => db.schema.clone(), "table" => DEMOGRAPHIC_TABLE },
+            params! { "schema" => db.schema.clone(), "table" => table },
         )
         .await
-        .context("querying information_schema.columns")?;
+        .with_context(|| format!("querying information_schema.columns for {table}"))?;
 
     drop(conn);
     let _ = pool.disconnect().await;
@@ -365,7 +407,7 @@ pub(crate) async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap>
         bail!(
             "no columns resolved for {}.{} — check schema name and privileges",
             db.schema,
-            DEMOGRAPHIC_TABLE
+            table
         );
     }
 
@@ -378,7 +420,7 @@ pub(crate) async fn resolve_column_map(db: &DatabaseConfig) -> Result<ColumnMap>
         "mariadb_binlog: resolved {} columns for {}.{}",
         map.len(),
         db.schema,
-        DEMOGRAPHIC_TABLE
+        table
     );
 
     Ok(map)
@@ -398,10 +440,26 @@ mod tests {
                 table: "demographic".to_string(),
             },
         );
+        tables.insert(
+            43,
+            TableRef {
+                schema: "oscar".to_string(),
+                table: "demographic_merged".to_string(),
+            },
+        );
+        tables.insert(
+            44,
+            TableRef {
+                schema: "oscar".to_string(),
+                table: "provider".to_string(),
+            },
+        );
 
-        assert!(is_target_table(&tables, 42, "oscar"));
-        assert!(!is_target_table(&tables, 42, "other_schema"));
-        assert!(!is_target_table(&tables, 999, "oscar")); // unknown table_id (F2)
+        assert_eq!(is_target_table(&tables, 42, "oscar").as_deref(), Some("demographic"));
+        assert_eq!(is_target_table(&tables, 43, "oscar").as_deref(), Some("demographic_merged"));
+        assert_eq!(is_target_table(&tables, 44, "oscar").as_deref(), Some("provider"));
+        assert!(is_target_table(&tables, 42, "other_schema").is_none());
+        assert!(is_target_table(&tables, 999, "oscar").is_none()); // unknown table_id (F2)
     }
 
     #[test]

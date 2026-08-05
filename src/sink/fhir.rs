@@ -11,8 +11,8 @@ use std::io::Write;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use fhirbolt::model::r4b::resources::{Patient, PatientDeceased, PatientLink};
-use fhirbolt::model::r4b::types::{Address, ContactPoint, HumanName, Identifier, Meta, Reference};
+use fhirbolt::model::r4b::resources::{Patient, PatientDeceased, PatientLink, Practitioner};
+use fhirbolt::model::r4b::types::{Address, CodeableConcept, ContactPoint, HumanName, Identifier, Meta, Reference};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
@@ -20,6 +20,7 @@ use crate::auth::TokenProvider;
 use crate::config::{Config, FhirConfig};
 use crate::dispatch::DispatchNotification;
 use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatient};
+use crate::domain::practitioner::DomainPractitioner;
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, ResourceType, Source, SyncEvent};
 use crate::metrics::SharedMetrics;
@@ -226,6 +227,9 @@ async fn sync_one(
         DomainResource::Patient(patient) => {
             sync_patient(client, fhir_cfg, token, event, patient).await
         }
+        DomainResource::Practitioner(practitioner) => {
+            sync_practitioner(client, fhir_cfg, token, event, practitioner).await
+        }
         other => {
             warn!(
                 "fhir sink: unsupported resource type {:?} for {}",
@@ -309,6 +313,82 @@ async fn sync_patient(
     }
 
     let identifier = format!("{}|{}", fhir_cfg.oscar_demographic_system, patient.demographic_no);
+    info!(
+        "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
+        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+    );
+    Ok(result)
+}
+
+async fn sync_practitioner(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    practitioner: &DomainPractitioner,
+) -> Result<FhirResult, SyncFailure> {
+    let mut fhir_practitioner = build_practitioner(practitioner, fhir_cfg);
+    if event.op() == Op::Delete {
+        fhir_practitioner.active = Some(false.into());
+    }
+
+    let body = fhirbolt::json::to_string(&fhir_practitioner, None)
+        .context("serializing FHIR Practitioner")
+        .map_err(SyncFailure::Permanent)?;
+
+    let mut req = build_put_request(client, fhir_cfg, token.as_deref(), event).body(body);
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| "sending conditional PUT to HAPI")
+        .map_err(SyncFailure::Retryable)?;
+    let status = resp.status();
+
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        let err = anyhow::anyhow!("HAPI conditional PUT failed ({status}): {text}");
+        if status.is_client_error() && status.as_u16() != 429 {
+            return Err(SyncFailure::Permanent(err));
+        }
+        return Err(SyncFailure::Retryable(err));
+    }
+
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let body_text = resp.text().await.unwrap_or_default();
+
+    let mut result = FhirResult {
+        fhir_id: String::new(),
+        version_id: None,
+    };
+
+    if !body_text.trim().is_empty() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body_text) {
+            if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                result.fhir_id = id.to_string();
+            }
+            if let Some(vid) = value
+                .get("meta")
+                .and_then(|m| m.get("versionId"))
+                .and_then(|v| v.as_str())
+            {
+                result.version_id = Some(vid.to_string());
+            }
+        }
+    }
+
+    if result.fhir_id.is_empty() {
+        if let Some(loc) = location {
+            result.fhir_id = parse_location_id(&loc).unwrap_or_default();
+            result.version_id = parse_location_version_id(&loc);
+        }
+    }
+
+    let identifier = format!("{}|{}", fhir_cfg.oscar_provider_system, practitioner.provider_no);
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
         event.idempotency_key(), identifier, result.fhir_id, result.version_id
@@ -484,6 +564,117 @@ fn patient_lifecycle(
     }
 }
 
+fn build_practitioner(payload: &DomainPractitioner, cfg: &FhirConfig) -> Practitioner {
+    let mut practitioner = Practitioner::default();
+
+    practitioner.meta = Some(Box::new(Meta {
+        source: Some(META_SOURCE.into()),
+        ..Default::default()
+    }));
+
+    practitioner.identifier.push(Identifier {
+        system: Some(cfg.oscar_provider_system.clone().into()),
+        value: Some(payload.provider_no.clone().into()),
+        ..Default::default()
+    });
+
+    if let Some(billing) = &payload.billing_no {
+        practitioner.identifier.push(Identifier {
+            system: Some(cfg.bc_msp_practitioner_system.clone().into()),
+            value: Some(billing.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    if let (Some(no), Some(type_)) = (&payload.practitioner_no, &payload.practitioner_no_type) {
+        if !no.is_empty() && !type_.is_empty() {
+            practitioner.identifier.push(Identifier {
+                r#type: Some(Box::new(CodeableConcept {
+                    text: Some(type_.clone().into()),
+                    ..Default::default()
+                })),
+                value: Some(no.clone().into()),
+                ..Default::default()
+            });
+        }
+    }
+
+    if payload.first_name.is_some() || payload.last_name.is_some() || payload.title.is_some() {
+        practitioner.name.push(HumanName {
+            prefix: payload
+                .title
+                .clone()
+                .map(|t| vec![t.into()])
+                .unwrap_or_default(),
+            given: payload
+                .first_name
+                .clone()
+                .map(|g| vec![g.into()])
+                .unwrap_or_default(),
+            family: payload.last_name.clone().map(Into::into),
+            ..Default::default()
+        });
+    }
+
+    practitioner.gender = Some(map_gender(payload.sex.as_deref()).into());
+
+    if let Some(dob) = &payload.date_of_birth {
+        practitioner.birth_date = Some(dob.clone().into());
+    }
+
+    if let Some(email) = &payload.email {
+        practitioner.telecom.push(ContactPoint {
+            system: Some("email".into()),
+            value: Some(email.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    if let Some(phone) = &payload.phone {
+        practitioner.telecom.push(ContactPoint {
+            r#use: Some("home".into()),
+            system: Some("phone".into()),
+            value: Some(phone.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    if let Some(work_phone) = &payload.work_phone {
+        practitioner.telecom.push(ContactPoint {
+            r#use: Some("work".into()),
+            system: Some("phone".into()),
+            value: Some(work_phone.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    if let Some(addr) = &payload.address {
+        practitioner.address.push(Address {
+            text: Some(addr.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    practitioner.active = Some(practitioner_active(payload).into());
+
+    practitioner
+}
+
+fn practitioner_active(payload: &DomainPractitioner) -> bool {
+    match payload.status.as_deref().map(|s| s.trim()) {
+        Some("1") => true,
+        Some("0") => false,
+        Some(other) => {
+            warn!(
+                "build_practitioner: unexpected status '{}' for provider_no {}",
+                other, payload.provider_no
+            );
+            true
+        }
+        None => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,12 +691,12 @@ mod tests {
     fn fhir_cfg() -> FhirConfig {
         FhirConfig {
             base_url: "http://localhost:8082/fhir".to_string(),
-            oscar_demographic_system: "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
+            oscar_demographic_system: "https://arsmedicatech.com/fhir/sid/oscar-demographic"
                 .to_string(),
             oscar_provider_system: "https://arsmedicatech.com/fhir/sid/oscar-provider".to_string(),
             oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string(),
             bc_phn_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".to_string(),
-            bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-msp-practitioner-id".to_string(),
+            bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".to_string(),
             token_env: None,
             keycloak: None,
         }
@@ -688,6 +879,68 @@ mod tests {
     }
 
     #[test]
+    fn build_practitioner_maps_all_in_scope_fields() {
+        let payload = DomainPractitioner {
+            provider_no: "1001".to_string(),
+            billing_no: Some("B1001".to_string()),
+            practitioner_no: Some("PN-1".to_string()),
+            practitioner_no_type: Some("College".to_string()),
+            ohip_no: None,
+            title: Some("Dr".to_string()),
+            first_name: Some("Alice".to_string()),
+            last_name: Some("Ng".to_string()),
+            sex: Some("F".to_string()),
+            date_of_birth: Some("1980-04-15".to_string()),
+            phone: Some("604-555-0100".to_string()),
+            email: Some("alice@example.com".to_string()),
+            work_phone: Some("604-555-0200".to_string()),
+            address: Some("123 Main St".to_string()),
+            status: Some("1".to_string()),
+        };
+
+        let p = build_practitioner(&payload, &fhir_cfg());
+        assert_eq!(p.identifier.len(), 3);
+        assert_eq!(p.identifier[0].system.as_ref().and_then(|s| s.value.as_deref()), Some("https://arsmedicatech.com/fhir/sid/oscar-provider"));
+        assert_eq!(p.identifier[0].value.as_ref().and_then(|s| s.value.as_deref()), Some("1001"));
+        assert_eq!(p.identifier[1].system.as_ref().and_then(|s| s.value.as_deref()), Some("https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"));
+        assert_eq!(p.identifier[1].value.as_ref().and_then(|s| s.value.as_deref()), Some("B1001"));
+        assert_eq!(p.identifier[2].value.as_ref().and_then(|s| s.value.as_deref()), Some("PN-1"));
+        assert_eq!(p.name.len(), 1);
+        assert_eq!(p.name[0].prefix.first().and_then(|s| s.value.as_deref()), Some("Dr"));
+        assert_eq!(p.name[0].given.first().and_then(|s| s.value.as_deref()), Some("Alice"));
+        assert_eq!(p.name[0].family.as_ref().and_then(|s| s.value.as_deref()), Some("Ng"));
+        assert_eq!(p.gender.as_ref().and_then(|c| c.value.as_deref()), Some("female"));
+        assert_eq!(p.birth_date.as_ref().and_then(|d| d.value.as_deref()), Some("1980-04-15"));
+        assert_eq!(p.telecom.len(), 3);
+        assert_eq!(p.address.len(), 1);
+        assert_eq!(p.active.as_ref().map(|b| b.value).flatten(), Some(true));
+    }
+
+    #[test]
+    fn build_practitioner_marks_inactive_for_status_zero() {
+        let payload = DomainPractitioner {
+            provider_no: "1003".to_string(),
+            billing_no: None,
+            practitioner_no: None,
+            practitioner_no_type: None,
+            ohip_no: None,
+            title: None,
+            first_name: None,
+            last_name: None,
+            sex: None,
+            date_of_birth: None,
+            phone: None,
+            email: None,
+            work_phone: None,
+            address: None,
+            status: Some("0".to_string()),
+        };
+
+        let p = build_practitioner(&payload, &fhir_cfg());
+        assert_eq!(p.active.as_ref().map(|b| b.value).flatten(), Some(false));
+    }
+
+    #[test]
     fn dead_letter_never_contains_full_payload() {
         let dir = std::env::temp_dir().join(format!("fhir-sync-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -826,11 +1079,11 @@ mod tests {
             fhir: FhirConfig {
                 base_url: format!("http://127.0.0.1:{port}/fhir"),
                 oscar_demographic_system:
-                    "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".into(),
+                    "https://arsmedicatech.com/fhir/sid/oscar-demographic".into(),
                 oscar_provider_system: "https://arsmedicatech.com/fhir/sid/oscar-provider".into(),
                 oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment".into(),
                 bc_phn_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".into(),
-                bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-msp-practitioner-id".into(),
+                bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".into(),
                 token_env: None,
                 keycloak: None,
             },
