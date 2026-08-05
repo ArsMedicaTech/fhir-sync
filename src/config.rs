@@ -134,6 +134,20 @@ pub struct FhirConfig {
     pub oscar_provider_system: String,
     #[serde(default = "default_oscar_appointment_system")]
     pub oscar_appointment_system: String,
+    #[serde(default = "default_oscar_note_system")]
+    pub oscar_note_system: String,
+    #[serde(default = "default_oscar_note_revision_system")]
+    pub oscar_note_revision_system: String,
+    #[serde(default = "default_oscar_note_document_system")]
+    pub oscar_note_document_system: String,
+    #[serde(default = "default_msp_service_code_system")]
+    pub msp_service_code_system: String,
+    #[serde(default = "default_oscar_dxresearch_system")]
+    pub oscar_dxresearch_system: String,
+    #[serde(default = "default_oscar_cpp_condition_system")]
+    pub oscar_cpp_condition_system: String,
+    #[serde(default = "default_icd9_system")]
+    pub icd9_system: String,
     #[serde(default = "default_bc_phn_system")]
     pub bc_phn_system: String,
     #[serde(default = "default_bc_msp_practitioner_system")]
@@ -150,6 +164,13 @@ impl Default for FhirConfig {
             oscar_demographic_system: default_oscar_demographic_system(),
             oscar_provider_system: default_oscar_provider_system(),
             oscar_appointment_system: default_oscar_appointment_system(),
+            oscar_note_system: default_oscar_note_system(),
+            oscar_note_revision_system: default_oscar_note_revision_system(),
+            oscar_note_document_system: default_oscar_note_document_system(),
+            msp_service_code_system: default_msp_service_code_system(),
+            oscar_dxresearch_system: default_oscar_dxresearch_system(),
+            oscar_cpp_condition_system: default_oscar_cpp_condition_system(),
+            icd9_system: default_icd9_system(),
             bc_phn_system: default_bc_phn_system(),
             bc_msp_practitioner_system: default_bc_msp_practitioner_system(),
             token_env: None,
@@ -172,6 +193,34 @@ fn default_oscar_provider_system() -> String {
 
 fn default_oscar_appointment_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string()
+}
+
+fn default_oscar_note_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-note".to_string()
+}
+
+fn default_oscar_note_revision_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-note-revision".to_string()
+}
+
+fn default_oscar_note_document_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-note-document".to_string()
+}
+
+fn default_msp_service_code_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/bc-msp-service-code".to_string()
+}
+
+fn default_oscar_dxresearch_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-dxresearch".to_string()
+}
+
+fn default_oscar_cpp_condition_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-cpp-condition".to_string()
+}
+
+fn default_icd9_system() -> String {
+    "http://hl7.org/fhir/sid/icd-9-cm".to_string()
 }
 
 fn default_bc_phn_system() -> String {
