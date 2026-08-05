@@ -30,7 +30,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: cargo test
-        run: cargo test --all-features --locked
+        run: cargo test --all-features --offline
   build:
     runs-on: ubuntu-latest
     needs: test
