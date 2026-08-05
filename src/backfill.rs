@@ -1,13 +1,16 @@
 //! `--backfill` snapshot mode.
 //!
 //! Captures the current binlog position *before* scanning and persists it
-//! as the checkpoint immediately, so the streaming run that follows résumes
+//! as the checkpoint immediately, so the streaming run that follows resumes
 //! from that position rather than "now" — nothing written during the scan
 //! is missed, and nothing already covered by the snapshot is re-read.
-//! Batch-SELECTs the `demographic` and `provider` tables through the same
-//! sink path as live CDC (`row_to_*` -> `SyncEvent` -> conditional PUT),
-//! so it is idempotent and safe to re-run (spec acceptance: running twice
-//! changes nothing).
+//! Batch-SELECTs the dependency-ordered tables (`provider`, `demographic`,
+//! `appointment`) through the same sink path as live CDC
+//! (`row_to_*` -> `SyncEvent` -> conditional PUT / Bundle), so it is
+//! idempotent and safe to re-run (spec acceptance: running twice changes
+//! nothing).
+
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use mysql_async::{prelude::*, Conn, Row, Value};
@@ -25,14 +28,20 @@ use crate::metrics::SharedMetrics;
 use crate::sources::mariadb_binlog::{self, resolve_column_map_for_table};
 use crate::sources::{RowChange, RowOp, SourcePosition};
 
-const DEMOGRAPHIC_TABLE: &str = "demographic";
-const PROVIDER_TABLE: &str = "provider";
-const APPOINTMENT_TABLE: &str = "appointment";
 const BATCH_SIZE: u64 = 500;
 
-/// Runs one backfill pass over `provider`, `demographic`, then `appointment`,
-/// sending every row through `tx` as an `Upsert` `SyncEvent`. Returns the total
-/// number of resources sent.
+/// Dependency order for the multi-resource backfill. Resources with outgoing
+/// conditional references (appointment) are scanned last so their targets have
+/// already been sent to the sink.
+type Mapper = fn(&RowChange, &ColumnMap) -> Option<DomainResource>;
+const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
+    ("provider", "provider_no", practitioner_mapper),
+    ("demographic", "demographic_no", patient_mapper),
+    ("appointment", "appointment_no", appointment_mapper),
+];
+
+/// Runs one dependency-ordered backfill pass, sending every row through `tx`
+/// as an `Upsert` `SyncEvent`. Returns the total number of resources sent.
 pub async fn run(
     cfg: &Config,
     tx: &Sender<SyncEvent>,
@@ -53,9 +62,13 @@ pub async fn run(
         },
     )?;
 
-    let demo_columns = resolve_column_map_for_table(db, DEMOGRAPHIC_TABLE).await?;
-    let provider_columns = resolve_column_map_for_table(db, PROVIDER_TABLE).await?;
-    let appt_columns = resolve_column_map_for_table(db, APPOINTMENT_TABLE).await?;
+    let mut column_maps = HashMap::new();
+    for (table, _, _) in BACKFILL_STEPS {
+        column_maps.insert(
+            table.to_string(),
+            resolve_column_map_for_table(db, table).await?,
+        );
+    }
 
     let url = format!(
         "mysql://{}:{}@{}:{}/{}",
@@ -69,43 +82,11 @@ pub async fn run(
 
     let mut total = 0usize;
 
-    // Practitioner first so that when we eventually move to literal references
-    // the dependency order is already sensible.
-    total += scan_table(
-        &mut conn,
-        db,
-        PROVIDER_TABLE,
-        "provider_no",
-        &provider_columns,
-        tx,
-        metrics,
-        practitioner_mapper,
-    )
-    .await?;
-
-    total += scan_table(
-        &mut conn,
-        db,
-        DEMOGRAPHIC_TABLE,
-        "demographic_no",
-        &demo_columns,
-        tx,
-        metrics,
-        patient_mapper,
-    )
-    .await?;
-
-    total += scan_table(
-        &mut conn,
-        db,
-        APPOINTMENT_TABLE,
-        "appointment_no",
-        &appt_columns,
-        tx,
-        metrics,
-        appointment_mapper,
-    )
-    .await?;
+    for (table, order_col, mapper) in BACKFILL_STEPS {
+        let columns = column_maps.get(*table).expect("resolved column map");
+        total += scan_table(&mut conn, db, *table, *order_col, columns, tx, metrics, *mapper)
+            .await?;
+    }
 
     drop(conn);
     let _ = pool.disconnect().await;
@@ -228,6 +209,12 @@ fn mysql_value_to_string(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backfill_steps_are_in_dependency_order() {
+        let names: Vec<_> = BACKFILL_STEPS.iter().map(|(t, _, _)| *t).collect();
+        assert_eq!(names, vec!["provider", "demographic", "appointment"]);
+    }
 
     #[test]
     fn mysql_value_to_string_formats_common_variants() {
