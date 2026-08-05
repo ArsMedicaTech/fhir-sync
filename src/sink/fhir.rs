@@ -148,7 +148,7 @@ async fn sync_with_retry(
         }
     }
 
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown sync failure")))
+    Err(SyncFailure::Permanent(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown sync failure"))))
 }
 
 /// Appends a dead-letter record. Identifiers only — never the full payload
@@ -1055,6 +1055,7 @@ mod tests {
             bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".to_string(),
             token_env: None,
             keycloak: None,
+            ..Default::default()
         }
     }
 
@@ -1565,6 +1566,7 @@ mod tests {
                 bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".into(),
                 token_env: None,
                 keycloak: None,
+                ..Default::default()
             },
             sync: SyncConfig {
                 checkpoint_path: "".into(),

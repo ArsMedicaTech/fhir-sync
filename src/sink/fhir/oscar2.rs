@@ -3,13 +3,13 @@ use base64ct::{Base64, Encoding};
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use fhirbolt::model::r4b::resources::{
     Bundle, BundleEntry, BundleEntryRequest, Condition, ConditionAbatement, ConditionOnset,
-    DocumentReference, Encounter, EncounterParticipant, FamilyMemberHistory,
-    FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset,
+    DocumentReference, DocumentReferenceContent, DocumentReferenceContext, Encounter,
+    EncounterParticipant, FamilyMemberHistory, FamilyMemberHistoryCondition,
+    FamilyMemberHistoryConditionOnset,
 };
 use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
-    Age, Annotation, Attachment, CodeableConcept, Coding, DocumentReferenceContent,
-    DocumentReferenceContext, Identifier, Meta, Period, Reference,
+    Age, Annotation, Attachment, CodeableConcept, Coding, Identifier, Meta, Period, Reference,
 };
 use tracing::{info, warn};
 
@@ -143,11 +143,11 @@ fn build_conditional_put_bundle(
     bundle.entry.push(BundleEntry {
         full_url: Some(format!("urn:uuid:{}", event.idempotency_key()).into()),
         resource: Some(fhir_resource),
-        request: Some(Box::new(BundleEntryRequest {
+        request: Some(BundleEntryRequest {
             method: "PUT".into(),
             url: conditional_url.into(),
             ..Default::default()
-        })),
+        }),
         ..Default::default()
     });
     bundle
@@ -439,10 +439,10 @@ fn build_document_reference(
     let is_admin = doc.encounter_type.as_deref() == Some("encounter without client");
     if !is_admin {
         let note_id_value = doc.uuid.as_deref().unwrap_or(&doc.note_id);
-        dr.context = Some(Box::new(DocumentReferenceContext {
+        dr.context = Some(DocumentReferenceContext {
             encounter: vec![encounter_ref(fhir_cfg, note_id_value)],
             ..Default::default()
-        }));
+        });
     }
 
     Ok(dr)
