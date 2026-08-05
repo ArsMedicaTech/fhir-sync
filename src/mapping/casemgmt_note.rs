@@ -114,6 +114,8 @@ pub fn row_to_casemgmt_note_resources(
         links,
     };
 
+    let note_id_for_info = doc_ref.note_id.clone();
+
     // Determine the FHIR Encounter.class to validate the encounter_type value.
     match resolve_class(&encounter) {
         Some(_) => {
@@ -123,7 +125,7 @@ pub fn row_to_casemgmt_note_resources(
             if !is_administrative_only(&encounter) {
                 out.push(DomainResource::Encounter(encounter));
             } else {
-                info!("casemgmt_note mapping: note_id={} is 'encounter without client'; emitting DocumentReference only", doc_ref.note_id);
+                info!("casemgmt_note mapping: note_id={} is 'encounter without client'; emitting DocumentReference only", note_id_for_info);
             }
             out
         }

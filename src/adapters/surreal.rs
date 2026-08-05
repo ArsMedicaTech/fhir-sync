@@ -28,5 +28,5 @@ fn example() {
     let proto_msg: ProtoPatient = domain_obj.into();
 
     // ready to send over gRPC
-    let bytes = proto_msg.encode_to_vec();
+    let _bytes = proto_msg.encode_to_vec();
 }

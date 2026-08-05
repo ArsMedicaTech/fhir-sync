@@ -332,7 +332,7 @@ fn build_encounter(
     let mut participants = Vec::new();
     if let Some(provider_no) = &enc.provider_no {
         participants.push(EncounterParticipant {
-            type_: vec![participant_type("PPRF", "primary performer")],
+            r#type: vec![participant_type("PPRF", "primary performer")],
             individual: Some(Box::new(practitioner_ref(fhir_cfg, provider_no))),
             ..Default::default()
         });
@@ -341,7 +341,7 @@ fn build_encounter(
         if let Some(signing) = &enc.signing_provider_no {
             if signing != enc.provider_no.as_deref().unwrap_or("") {
                 participants.push(EncounterParticipant {
-                    type_: vec![participant_type("ATND", "attender")],
+                    r#type: vec![participant_type("ATND", "attender")],
                     individual: Some(Box::new(practitioner_ref(fhir_cfg, signing))),
                     ..Default::default()
                 });
@@ -355,7 +355,7 @@ fn build_encounter(
     }
 
     if let Some(billing_code) = &enc.billing_code {
-        encounter.type_.push(CodeableConcept {
+        encounter.r#type.push(CodeableConcept {
             coding: vec![Coding {
                 system: Some(fhir_cfg.msp_service_code_system.clone().into()),
                 code: Some(billing_code.clone().into()),
@@ -368,7 +368,11 @@ fn build_encounter(
     if let Some(obs) = &enc.observation_date {
         let (start, end) = encounter_period(obs, enc.hour, enc.minute, oscar_cfg)?;
         if start.is_some() || end.is_some() {
-            encounter.period = Some(Box::new(Period { start, end }));
+            encounter.period = Some(Box::new(Period {
+                r#start: start.map(|s| s.into()),
+                r#end: end.map(|s| s.into()),
+                ..Default::default()
+            }));
         }
     }
 
@@ -402,7 +406,7 @@ fn build_document_reference(
     dr.status = if doc.archived { "entered-in-error".into() } else { "current".into() };
     dr.doc_status = if doc.signed { Some("final".into()) } else { Some("preliminary".into()) };
 
-    dr.type_ = Some(Box::new(CodeableConcept {
+    dr.r#type = Some(Box::new(CodeableConcept {
         text: Some(document_reference_type(&doc.encounter_type).into()),
         ..Default::default()
     }));
@@ -552,7 +556,7 @@ fn build_condition(condition: &DomainCondition, fhir_cfg: &FhirConfig) -> Result
     }
     if !note_text.is_empty() {
         cond.note.push(Annotation {
-            text: Some(note_text.into()),
+            text: note_text.into(),
             ..Default::default()
         });
     }
@@ -611,7 +615,7 @@ fn build_family_member_history(
         let mut notes = Vec::new();
         if let Some(stage) = &fh.life_stage {
             notes.push(Annotation {
-                text: Some(stage.clone().into()),
+                text: stage.clone().into(),
                 ..Default::default()
             });
         }

@@ -44,7 +44,7 @@ pub async fn run(
     for link in &cfg.replication.links {
         let Some(target_name) = link.target.as_deref() else { continue };
         let cp = util::load_checkpoint(&checkpoint_path(&cfg, &link.name));
-        let source_node = find_node(&cfg, &link.source)?;
+        let _source_node = find_node(&cfg, &link.source)?;
         let target_node = find_node(&cfg, target_name)?;
         let mut guard = state.echo.lock().unwrap();
         for (resource_key, version) in &cp.last_versionids_seen {

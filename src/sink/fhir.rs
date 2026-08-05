@@ -812,9 +812,7 @@ fn to_appointment_instant(
         .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid appointment_date '{date}': {e}")))?;
     let naive_time = NaiveTime::parse_from_str(time, "%H:%M:%S")
         .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid start/end_time '{time}': {e}")))?;
-    let naive = naive_date
-        .and_time(naive_time)
-        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("invalid appointment date/time '{date} {time}'")))?;
+    let naive = naive_date.and_time(naive_time);
 
     let tz: chrono_tz::Tz = tz_name
         .parse()
@@ -1021,11 +1019,11 @@ fn build_appointment_bundle(
     bundle.entry.push(BundleEntry {
         full_url: Some(format!("urn:uuid:{}", event.idempotency_key()).into()),
         resource: Some(FhirResource::Appointment(Box::new(fhir_appointment.clone()))),
-        request: Some(Box::new(BundleEntryRequest {
+        request: Some(BundleEntryRequest {
             method: "PUT".into(),
             url: conditional_url.into(),
             ..Default::default()
-        })),
+        }),
         ..Default::default()
     });
     bundle

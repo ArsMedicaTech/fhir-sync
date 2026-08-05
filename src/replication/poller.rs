@@ -397,7 +397,7 @@ fn source_tag_matches(source: &str, tag: &str) -> bool {
 }
 
 fn should_suppress(
-    link: &ReplicationLink,
+    _link: &ReplicationLink,
     source_node: &ReplicationNode,
     target_node: &ReplicationNode,
     state: &SharedState,
