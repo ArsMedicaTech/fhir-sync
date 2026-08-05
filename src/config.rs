@@ -475,6 +475,12 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
         if !names.insert(consumer.name.clone()) {
             anyhow::bail!("dispatch consumer name '{}' is duplicated", consumer.name);
         }
+    }
+
+    for consumer in &cfg.consumers {
+        if !consumer.enabled {
+            continue;
+        }
 
         let url = url::Url::parse(&consumer.url)
             .map_err(|e| anyhow::anyhow!("dispatch consumer '{}' url '{}' is invalid: {e}", consumer.name, consumer.url))?;
