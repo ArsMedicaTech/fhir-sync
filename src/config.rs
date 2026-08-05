@@ -21,6 +21,29 @@ pub struct Config {
     /// replication-only deployments, which have no MySQL to tail.
     #[serde(default = "default_true")]
     pub oscar_enabled: bool,
+    /// Oscar-specific settings (timezone for appointment conversion, etc.).
+    #[serde(default)]
+    pub oscar: OscarConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OscarConfig {
+    /// IANA timezone name used to interpret Oscar's local date/time columns
+    /// (appointments, provider schedules). See chrono-tz.
+    #[serde(default = "default_oscar_timezone")]
+    pub timezone: String,
+}
+
+impl Default for OscarConfig {
+    fn default() -> Self {
+        Self {
+            timezone: default_oscar_timezone(),
+        }
+    }
+}
+
+fn default_oscar_timezone() -> String {
+    "America/Vancouver".to_string()
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -89,8 +112,14 @@ pub struct FhirConfig {
     pub base_url: String,
     #[serde(default = "default_oscar_demographic_system")]
     pub oscar_demographic_system: String,
-    #[serde(default = "default_oscar_hin_system")]
-    pub oscar_hin_system: String,
+    #[serde(default = "default_oscar_provider_system")]
+    pub oscar_provider_system: String,
+    #[serde(default = "default_oscar_appointment_system")]
+    pub oscar_appointment_system: String,
+    #[serde(default = "default_bc_phn_system")]
+    pub bc_phn_system: String,
+    #[serde(default = "default_bc_msp_practitioner_system")]
+    pub bc_msp_practitioner_system: String,
     pub token_env: Option<String>,
     #[serde(default)]
     pub keycloak: Option<KeycloakConfig>,
@@ -101,7 +130,10 @@ impl Default for FhirConfig {
         Self {
             base_url: default_fhir_base_url(),
             oscar_demographic_system: default_oscar_demographic_system(),
-            oscar_hin_system: default_oscar_hin_system(),
+            oscar_provider_system: default_oscar_provider_system(),
+            oscar_appointment_system: default_oscar_appointment_system(),
+            bc_phn_system: default_bc_phn_system(),
+            bc_msp_practitioner_system: default_bc_msp_practitioner_system(),
             token_env: None,
             keycloak: None,
         }
@@ -113,11 +145,23 @@ fn default_fhir_base_url() -> String {
 }
 
 fn default_oscar_demographic_system() -> String {
-    "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".to_string()
+    "https://arsmedicatech.com/fhir/sid/oscar-demographic".to_string()
 }
 
-fn default_oscar_hin_system() -> String {
-    "https://arsmedicatech.com/fhir/sid/oscar-hin".to_string()
+fn default_oscar_provider_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-provider".to_string()
+}
+
+fn default_oscar_appointment_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string()
+}
+
+fn default_bc_phn_system() -> String {
+    "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".to_string()
+}
+
+fn default_bc_msp_practitioner_system() -> String {
+    "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -293,7 +337,7 @@ fn default_link_conflict_policy() -> ConflictPolicy {
     ConflictPolicy::DeadLetter
 }
 
-const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] = &["Patient", "Appointment"];
+const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] = &["Patient", "Practitioner", "Appointment"];
 const KNOWN_DISPATCH_OPS: &[&str] = &["upsert", "delete"];
 
 #[derive(Debug, Clone, Deserialize)]
