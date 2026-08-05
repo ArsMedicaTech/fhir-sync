@@ -813,6 +813,7 @@ mod tests {
             oscar_enabled: true,
             oscar: OscarConfig {
                 timezone: Some("Mars/Opportunity".to_string()),
+                region: None,
                 appointment_status_map: OscarConfig::default().appointment_status_map,
             },
             debug: None,
@@ -833,6 +834,7 @@ mod tests {
             oscar_enabled: true,
             oscar: OscarConfig {
                 timezone: Some("America/Vancouver".to_string()),
+                region: None,
                 appointment_status_map: OscarConfig::default().appointment_status_map,
             },
             debug: None,

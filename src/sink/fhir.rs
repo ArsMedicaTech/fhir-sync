@@ -1068,6 +1068,7 @@ mod tests {
     fn oscar_cfg() -> OscarConfig {
         OscarConfig {
             timezone: Some("America/Vancouver".to_string()),
+            region: Some("BC".to_string()),
             appointment_status_map: crate::config::OscarConfig::default().appointment_status_map,
         }
     }
