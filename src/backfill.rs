@@ -16,7 +16,8 @@ use tracing::{info, warn};
 
 use crate::checkpoint::{self, Checkpoint};
 use crate::config::Config;
-use crate::event::{Op, ResourceType, Source as EventSource, SyncEvent};
+use crate::domain::resource::DomainResource;
+use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
 use crate::metrics::SharedMetrics;
 use crate::sources::mariadb_binlog;
@@ -98,15 +99,12 @@ pub async fn run(
                 continue;
             };
 
-            let idempotency_key = format!("oscar:demographic:backfill:{}", patient.demographic_no);
-            let sync_event = SyncEvent {
-                source: EventSource::OscarBinlog,
-                op: Op::Upsert,
-                resource_type: ResourceType::Patient,
-                idempotency_key,
-                payload: patient,
-                occurred_at: chrono::Utc::now(),
-            };
+            let sync_event = SyncEvent::new(
+                EventSource::OscarBackfill { table: DEMOGRAPHIC_TABLE.to_string() },
+                Op::Upsert,
+                DomainResource::Patient(patient),
+                chrono::Utc::now(),
+            );
 
             metrics.inc_received();
             if tx.send(sync_event).await.is_err() {

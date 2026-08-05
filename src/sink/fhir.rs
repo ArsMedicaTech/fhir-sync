@@ -11,16 +11,17 @@ use std::io::Write;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use fhirbolt::model::r4b::resources::Patient;
-use fhirbolt::model::r4b::types::{Address, ContactPoint, HumanName, Identifier, Meta};
+use fhirbolt::model::r4b::resources::{Patient, PatientDeceased, PatientLink};
+use fhirbolt::model::r4b::types::{Address, ContactPoint, HumanName, Identifier, Meta, Reference};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
 use crate::auth::TokenProvider;
 use crate::config::{Config, FhirConfig};
 use crate::dispatch::DispatchNotification;
-use crate::domain::patient::DomainPatient;
-use crate::event::{Op, SyncEvent};
+use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatient};
+use crate::domain::resource::DomainResource;
+use crate::event::{Op, ResourceType, Source, SyncEvent};
 use crate::metrics::SharedMetrics;
 
 const META_SOURCE: &str = "urn:arsmedicatech:fhir-sync:oscar";
@@ -39,7 +40,7 @@ pub async fn run(
     };
 
     while let Some(event) = rx.recv().await {
-        let key = event.idempotency_key.clone();
+        let key = event.idempotency_key().to_string();
 
         match sync_with_retry(&client, &cfg, token_provider.as_ref(), &event, &metrics).await {
             Ok(result) => {
@@ -80,16 +81,13 @@ fn build_dispatch_notification(
     result: &FhirResult,
 ) -> DispatchNotification {
     DispatchNotification {
-        resource_type: match event.resource_type {
-            crate::event::ResourceType::Patient => "Patient",
-        }
-        .to_string(),
+        resource_type: event.resource_type().as_path().to_string(),
         fhir_id: result.fhir_id.clone(),
         fhir_version_id: result.version_id.clone(),
-        op: event.op,
-        source: event.source,
-        idempotency_key: event.idempotency_key.clone(),
-        occurred_at: event.occurred_at,
+        op: event.op(),
+        source: event.source().clone(),
+        idempotency_key: event.idempotency_key().to_string(),
+        occurred_at: event.occurred_at(),
         fhir_base_url: cfg.fhir.base_url.clone(),
     }
 }
@@ -116,7 +114,7 @@ async fn sync_with_retry(
                     "fhir sink: attempt {}/{} failed permanently for {}: {e:?}",
                     attempt + 1,
                     max_attempts,
-                    event.idempotency_key
+                    event.idempotency_key()
                 );
                 last_err = Some(e);
                 break;
@@ -126,7 +124,7 @@ async fn sync_with_retry(
                     "fhir sink: attempt {}/{} failed for {}: {e:?}",
                     attempt + 1,
                     max_attempts,
-                    event.idempotency_key
+                    event.idempotency_key()
                 );
                 last_err = Some(e);
                 if attempt + 1 < max_attempts {
@@ -155,11 +153,11 @@ fn write_dead_letter(path: &str, event: &SyncEvent, err: &anyhow::Error) -> Resu
         .with_context(|| format!("opening dead letter file {path}"))?;
 
     let record = serde_json::json!({
-        "idempotency_key": event.idempotency_key,
-        "source": format!("{:?}", event.source),
-        "op": format!("{:?}", event.op),
-        "occurred_at": event.occurred_at.to_rfc3339(),
-        "demographic_no": event.payload.demographic_no,
+        "idempotency_key": event.idempotency_key(),
+        "source": format!("{:?}", event.source()),
+        "op": format!("{:?}", event.op()),
+        "occurred_at": event.occurred_at().to_rfc3339(),
+        "source_id": event.payload().source_id(),
         "error": err.to_string(),
     });
 
@@ -188,11 +186,15 @@ fn build_put_request(
     token: Option<&str>,
     event: &SyncEvent,
 ) -> reqwest::RequestBuilder {
-    let base = format!("{}/Patient", fhir_cfg.base_url.trim_end_matches('/'));
-    let identifier = format!(
-        "{}|{}",
-        fhir_cfg.oscar_demographic_system, event.payload.demographic_no
-    );
+    let resource_path = event.resource_type().as_path();
+    let base = format!("{}/{resource_path}", fhir_cfg.base_url.trim_end_matches('/'));
+
+    let identifier_system = match event.resource_type() {
+        ResourceType::Patient => &fhir_cfg.oscar_demographic_system,
+        ResourceType::Practitioner => &fhir_cfg.oscar_provider_system,
+        ResourceType::Appointment => &fhir_cfg.oscar_appointment_system,
+    };
+    let identifier = format!("{}|{}", identifier_system, event.payload().source_id());
 
     let mut req = client
         .put(&base)
@@ -219,16 +221,42 @@ async fn sync_one(
             .as_ref()
             .and_then(|key| std::env::var(key).ok()),
     };
-    let mut patient = build_patient(&event.payload, fhir_cfg);
-    if event.op == Op::Delete {
-        patient.active = Some(false.into());
+
+    match event.payload() {
+        DomainResource::Patient(patient) => {
+            sync_patient(client, fhir_cfg, token, event, patient).await
+        }
+        other => {
+            warn!(
+                "fhir sink: unsupported resource type {:?} for {}",
+                event.resource_type(),
+                event.idempotency_key()
+            );
+            Err(SyncFailure::Permanent(anyhow::anyhow!(
+                "unsupported resource type {:?}",
+                event.resource_type()
+            )))
+        }
+    }
+}
+
+async fn sync_patient(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    patient: &DomainPatient,
+) -> Result<FhirResult, SyncFailure> {
+    let mut fhir_patient = build_patient(patient, fhir_cfg);
+    if event.op() == Op::Delete {
+        fhir_patient.active = Some(false.into());
     }
 
-    let body = fhirbolt::json::to_string(&patient, None)
+    let body = fhirbolt::json::to_string(&fhir_patient, None)
         .context("serializing FHIR Patient")
         .map_err(SyncFailure::Permanent)?;
 
-    let mut req = build_put_request(client, fhir_cfg, token, event).body(body);
+    let mut req = build_put_request(client, fhir_cfg, token.as_deref(), event).body(body);
 
     let resp = req
         .send()
@@ -280,13 +308,10 @@ async fn sync_one(
         }
     }
 
-    let identifier = format!(
-        "{}|{}",
-        fhir_cfg.oscar_demographic_system, event.payload.demographic_no
-    );
+    let identifier = format!("{}|{}", fhir_cfg.oscar_demographic_system, patient.demographic_no);
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key, identifier, result.fhir_id, result.version_id
+        event.idempotency_key(), identifier, result.fhir_id, result.version_id
     );
     Ok(result)
 }
@@ -314,12 +339,20 @@ fn parse_location_version_id(location: &str) -> Option<String> {
     None
 }
 
-/// M/male -> male, F/female -> female, else unknown. Never omitted (D5).
+/// Maps Oscar `sex` to FHIR R4 `AdministrativeGender`.
+///
+/// `M`/`MALE` -> male, `F`/`FEMALE` -> female, `O`/`T`/`I` -> other,
+/// empty/`U`/NULL -> unknown. Anything else is logged and treated as unknown.
 fn map_gender(sex: Option<&str>) -> &'static str {
-    match sex.map(|s| s.to_ascii_uppercase()) {
-        Some(s) if s == "M" || s == "MALE" => "male",
-        Some(s) if s == "F" || s == "FEMALE" => "female",
-        _ => "unknown",
+    match sex.map(|s| s.trim().to_ascii_uppercase()).as_deref() {
+        None | Some("") | Some("U") => "unknown",
+        Some("M") | Some("MALE") => "male",
+        Some("F") | Some("FEMALE") => "female",
+        Some("O") | Some("T") | Some("I") => "other",
+        Some(other) => {
+            warn!("map_gender: unexpected sex value '{}'", other);
+            "unknown"
+        }
     }
 }
 
@@ -340,7 +373,7 @@ fn build_patient(payload: &DomainPatient, cfg: &FhirConfig) -> Patient {
     // Provincial PHN, only if this Oscar instance has it.
     if let Some(hin) = &payload.hin {
         patient.identifier.push(Identifier {
-            system: Some(cfg.oscar_hin_system.clone().into()),
+            system: Some(cfg.bc_phn_system.clone().into()),
             value: Some(hin.clone().into()),
             ..Default::default()
         });
@@ -362,7 +395,7 @@ fn build_patient(payload: &DomainPatient, cfg: &FhirConfig) -> Patient {
         patient.birth_date = Some(dob.clone().into());
     }
 
-    // Never omitted — falls back to "unknown" (D5).
+    // Never omitted — falls back to "unknown".
     patient.gender = Some(map_gender(payload.sex.as_deref()).into());
 
     if let Some(email) = &payload.email {
@@ -381,25 +414,82 @@ fn build_patient(payload: &DomainPatient, cfg: &FhirConfig) -> Patient {
         });
     }
 
-    if let Some((city, province, country, postal)) = &payload.location {
-        patient.address.push(Address {
-            city: Some(city.clone().into()),
-            state: Some(province.clone().into()),
-            country: Some(country.clone().into()),
-            postal_code: Some(postal.clone().into()),
-            ..Default::default()
-        });
+    for addr in &payload.addresses {
+        patient.address.push(build_address(addr));
     }
 
+    // `patient_status` and `demographic_merged` both influence active/deceased/link.
+    let (active, deceased, link) = patient_lifecycle(payload, cfg);
+    patient.active = Some(active.into());
+    patient.deceased = deceased;
+    patient.link = link;
+
     patient
+}
+
+fn build_address(addr: &DomainAddress) -> Address {
+    Address {
+        r#use: Some(addr.use_.as_str().into()),
+        r#type: Some(addr.kind.as_str().into()),
+        r#line: addr.line.clone().map(|l| vec![l.into()]).unwrap_or_default(),
+        city: addr.city.clone().map(Into::into),
+        state: addr.province.clone().map(Into::into),
+        country: Some("CA".into()),
+        postal_code: addr.postal.clone().map(Into::into),
+        ..Default::default()
+    }
+}
+
+fn patient_lifecycle(
+    payload: &DomainPatient,
+    cfg: &FhirConfig,
+) -> (bool, Option<PatientDeceased>, Vec<PatientLink>) {
+    if let Some(merged_to) = &payload.merged_to {
+        let sys: String =
+            url::form_urlencoded::byte_serialize(cfg.oscar_demographic_system.as_bytes()).collect();
+        let val: String = url::form_urlencoded::byte_serialize(merged_to.as_bytes()).collect();
+        let reference = format!("Patient?identifier={sys}|{val}");
+        let link = PatientLink {
+            other: Box::new(Reference {
+                reference: Some(reference.into()),
+                ..Default::default()
+            }),
+            r#type: "replaced-by".into(),
+            ..Default::default()
+        };
+        return (false, None, vec![link]);
+    }
+
+    match payload
+        .patient_status
+        .as_deref()
+        .map(|s| s.trim().to_ascii_uppercase())
+        .as_deref()
+    {
+        Some("AC") => (true, None, Vec::new()),
+        Some("IN") => (false, None, Vec::new()),
+        Some("DE") => (
+            false,
+            Some(PatientDeceased::Boolean(true.into())),
+            Vec::new(),
+        ),
+        Some(other) => {
+            warn!(
+                "build_patient: unexpected patient_status '{}' for demographic_no {}",
+                other, payload.demographic_no
+            );
+            (true, None, Vec::new())
+        }
+        None => (true, None, Vec::new()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{
-        Config, DatabaseConfig, DispatchConfig, FhirConfig, ReplicationConfig, ServerConfig,
-        SyncConfig,
+        Config, DatabaseConfig, DispatchConfig, FhirConfig, OscarConfig, ReplicationConfig,
+        ServerConfig, SyncConfig,
     };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -412,7 +502,10 @@ mod tests {
             base_url: "http://localhost:8082/fhir".to_string(),
             oscar_demographic_system: "https://arsmedicatech.com/fhir/sid/oscar-demographic-no"
                 .to_string(),
-            oscar_hin_system: "https://arsmedicatech.com/fhir/sid/oscar-hin".to_string(),
+            oscar_provider_system: "https://arsmedicatech.com/fhir/sid/oscar-provider".to_string(),
+            oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string(),
+            bc_phn_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".to_string(),
+            bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-msp-practitioner-id".to_string(),
             token_env: None,
             keycloak: None,
         }
@@ -421,8 +514,14 @@ mod tests {
     #[test]
     fn gender_mapping_never_omits() {
         assert_eq!(map_gender(Some("M")), "male");
+        assert_eq!(map_gender(Some("MALE")), "male");
         assert_eq!(map_gender(Some("female")), "female");
-        assert_eq!(map_gender(Some("other")), "unknown");
+        assert_eq!(map_gender(Some("FEMALE")), "female");
+        assert_eq!(map_gender(Some("O")), "other");
+        assert_eq!(map_gender(Some("T")), "other");
+        assert_eq!(map_gender(Some("I")), "other");
+        assert_eq!(map_gender(Some("U")), "unknown");
+        assert_eq!(map_gender(Some("")), "unknown");
         assert_eq!(map_gender(None), "unknown");
     }
 
@@ -433,7 +532,9 @@ mod tests {
             first_name: Some("Alice".to_string()),
             last_name: Some("Smith".to_string()),
             date_of_birth: Some("1990-03-05".to_string()),
-            location: None,
+            addresses: Vec::new(),
+            patient_status: None,
+            merged_to: None,
             sex: Some("F".to_string()),
             phone: None,
             email: None,
@@ -454,7 +555,9 @@ mod tests {
             first_name: None,
             last_name: None,
             date_of_birth: None,
-            location: None,
+            addresses: Vec::new(),
+            patient_status: None,
+            merged_to: None,
             sex: None,
             phone: None,
             email: None,
@@ -470,32 +573,145 @@ mod tests {
     }
 
     #[test]
-    fn dead_letter_never_contains_full_payload() {
-        use crate::event::{ResourceType, Source};
+    fn build_patient_emits_two_addresses() {
+        let payload = DomainPatient {
+            demographic_no: "101".to_string(),
+            first_name: Some("Bob".to_string()),
+            last_name: Some("Whitfield".to_string()),
+            date_of_birth: Some("1968-07-14".to_string()),
+            addresses: vec![
+                DomainAddress {
+                    line: Some("123 Postal St".to_string()),
+                    city: Some("Vancouver".to_string()),
+                    province: Some("BC".to_string()),
+                    postal: Some("V6C1V5".to_string()),
+                    use_: AddressUse::Home,
+                    kind: AddressKind::Postal,
+                },
+                DomainAddress {
+                    line: Some("456 Physical Ave".to_string()),
+                    city: Some("Burnaby".to_string()),
+                    province: Some("BC".to_string()),
+                    postal: Some("V5A2B3".to_string()),
+                    use_: AddressUse::Home,
+                    kind: AddressKind::Physical,
+                },
+            ],
+            patient_status: Some("AC".to_string()),
+            merged_to: None,
+            sex: Some("M".to_string()),
+            phone: None,
+            email: None,
+            hin: Some("9123456781".to_string()),
+        };
 
+        let patient = build_patient(&payload, &fhir_cfg());
+        assert_eq!(patient.address.len(), 2);
+        assert_eq!(patient.address[0].r#type.as_ref().map(|c| c.value.clone()), Some(Some("postal".to_string())));
+        assert_eq!(patient.address[1].r#type.as_ref().map(|c| c.value.clone()), Some(Some("physical".to_string())));
+        assert_eq!(patient.address[0].country.as_ref().map(|c| c.value.clone()), Some(Some("CA".to_string())));
+        assert_eq!(patient.active.as_ref().map(|b| b.value).flatten(), Some(true));
+        assert_eq!(patient.identifier.len(), 2); // no ver
+    }
+
+    #[test]
+    fn build_patient_allows_null_address_line() {
+        let payload = DomainPatient {
+            demographic_no: "102".to_string(),
+            first_name: Some("Kayode".to_string()),
+            last_name: Some("Adeyemi".to_string()),
+            date_of_birth: Some("1991-03-22".to_string()),
+            addresses: vec![DomainAddress {
+                line: None,
+                city: Some("Vancouver".to_string()),
+                province: Some("BC".to_string()),
+                postal: Some("V5K0A1".to_string()),
+                use_: AddressUse::Home,
+                kind: AddressKind::Postal,
+            }],
+            patient_status: None,
+            merged_to: None,
+            sex: Some("O".to_string()),
+            phone: None,
+            email: None,
+            hin: None,
+        };
+
+        let patient = build_patient(&payload, &fhir_cfg());
+        assert_eq!(patient.address.len(), 1);
+        assert!(patient.address[0].r#line.is_empty());
+        assert_eq!(patient.gender.as_ref().map(|c| c.value.clone()).flatten().as_deref(), Some("other"));
+    }
+
+    #[test]
+    fn build_patient_marks_deceased_and_inactive() {
+        let payload = DomainPatient {
+            demographic_no: "104".to_string(),
+            first_name: Some("Luc".to_string()),
+            last_name: Some("Tremblay".to_string()),
+            date_of_birth: Some("1943-11-30".to_string()),
+            addresses: Vec::new(),
+            patient_status: Some("DE".to_string()),
+            merged_to: None,
+            sex: Some("M".to_string()),
+            phone: None,
+            email: None,
+            hin: None,
+        };
+
+        let patient = build_patient(&payload, &fhir_cfg());
+        assert_eq!(patient.active.as_ref().map(|b| b.value).flatten(), Some(false));
+        assert!(matches!(patient.deceased, Some(PatientDeceased::Boolean(_))));
+    }
+
+    #[test]
+    fn build_patient_marks_replaced_by_link() {
+        let payload = DomainPatient {
+            demographic_no: "106".to_string(),
+            first_name: None,
+            last_name: None,
+            date_of_birth: None,
+            addresses: Vec::new(),
+            patient_status: None,
+            merged_to: Some("101".to_string()),
+            sex: None,
+            phone: None,
+            email: None,
+            hin: None,
+        };
+
+        let patient = build_patient(&payload, &fhir_cfg());
+        assert_eq!(patient.active.as_ref().map(|b| b.value).flatten(), Some(false));
+        assert_eq!(patient.link.len(), 1);
+        assert_eq!(patient.link[0].r#type.value.as_deref(), Some("replaced-by"));
+        assert!(patient.link[0].other.reference.as_ref().map(|s| s.value.as_deref()).flatten().unwrap_or("").contains("101"));
+    }
+
+    #[test]
+    fn dead_letter_never_contains_full_payload() {
         let dir = std::env::temp_dir().join(format!("fhir-sync-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("dead_letter.jsonl");
         let path_str = path.to_str().unwrap();
 
-        let event = SyncEvent {
-            source: Source::OscarBinlog,
-            op: Op::Upsert,
-            resource_type: ResourceType::Patient,
-            idempotency_key: "oscar:demographic:123:456".to_string(),
-            payload: DomainPatient {
+        let event = SyncEvent::new(
+            Source::OscarBinlog { table: "demographic".to_string() },
+            Op::Upsert,
+            DomainResource::Patient(DomainPatient {
                 demographic_no: "123".to_string(),
                 first_name: Some("Alice".to_string()),
                 last_name: Some("Smith".to_string()),
                 date_of_birth: None,
-                location: None,
+                addresses: Vec::new(),
+                patient_status: None,
+                merged_to: None,
                 sex: None,
                 phone: None,
                 email: Some("alice@example.com".to_string()),
                 hin: None,
-            },
-            occurred_at: chrono::Utc::now(),
-        };
+            }),
+            chrono::Utc::now(),
+        );
 
         write_dead_letter(path_str, &event, &anyhow::anyhow!("HAPI unreachable")).unwrap();
 
@@ -510,27 +726,25 @@ mod tests {
 
     #[test]
     fn conditional_put_url_percent_encodes_pipe() {
-        use crate::event::{ResourceType, Source};
-
         let cfg = fhir_cfg();
-        let event = SyncEvent {
-            source: Source::OscarBinlog,
-            op: Op::Upsert,
-            resource_type: ResourceType::Patient,
-            idempotency_key: "test".to_string(),
-            payload: DomainPatient {
+        let event = SyncEvent::new(
+            Source::OscarBinlog { table: "demographic".to_string() },
+            Op::Upsert,
+            DomainResource::Patient(DomainPatient {
                 demographic_no: "121".to_string(),
                 first_name: None,
                 last_name: None,
                 date_of_birth: None,
-                location: None,
+                addresses: Vec::new(),
+                patient_status: None,
+                merged_to: None,
                 sex: None,
                 phone: None,
                 email: None,
                 hin: None,
-            },
-            occurred_at: chrono::Utc::now(),
-        };
+            }),
+            chrono::Utc::now(),
+        );
 
         let req = build_put_request(&reqwest::Client::new(), &cfg, None, &event)
             .body("{}".to_string())
@@ -613,7 +827,10 @@ mod tests {
                 base_url: format!("http://127.0.0.1:{port}/fhir"),
                 oscar_demographic_system:
                     "https://arsmedicatech.com/fhir/sid/oscar-demographic-no".into(),
-                oscar_hin_system: "https://arsmedicatech.com/fhir/sid/oscar-hin".into(),
+                oscar_provider_system: "https://arsmedicatech.com/fhir/sid/oscar-provider".into(),
+                oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment".into(),
+                bc_phn_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".into(),
+                bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-msp-practitioner-id".into(),
                 token_env: None,
                 keycloak: None,
             },
@@ -626,27 +843,28 @@ mod tests {
             replication: ReplicationConfig::default(),
             dispatch: DispatchConfig::default(),
             oscar_enabled: true,
+            oscar: OscarConfig::default(),
             debug: None,
         };
 
-        let event = SyncEvent {
-            source: crate::event::Source::OscarBinlog,
-            op: Op::Upsert,
-            resource_type: crate::event::ResourceType::Patient,
-            idempotency_key: "test".into(),
-            payload: DomainPatient {
+        let event = SyncEvent::new(
+            Source::OscarBinlog { table: "demographic".to_string() },
+            Op::Upsert,
+            DomainResource::Patient(DomainPatient {
                 demographic_no: "121".into(),
                 first_name: None,
                 last_name: None,
                 date_of_birth: None,
-                location: None,
+                addresses: Vec::new(),
+                patient_status: None,
+                merged_to: None,
                 sex: None,
                 phone: None,
                 email: None,
                 hin: None,
-            },
-            occurred_at: chrono::Utc::now(),
-        };
+            }),
+            chrono::Utc::now(),
+        );
 
         let metrics = crate::metrics::Metrics::new();
         let result = sync_with_retry(&client, &cfg, None, &event, &metrics)

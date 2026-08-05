@@ -262,8 +262,8 @@ mod tests {
             fhir_id: "123".to_string(),
             fhir_version_id: Some("4".to_string()),
             op: Op::Upsert,
-            source: Source::OscarBinlog,
-            idempotency_key: "oscar:demographic:42:0000012345".to_string(),
+            source: Source::OscarBinlog { table: "demographic".to_string() },
+            idempotency_key: "oscar:demographic:42".to_string(),
             occurred_at: Utc::now(),
             fhir_base_url: "https://fhir.example.invalid/fhir".to_string(),
         }
@@ -285,7 +285,7 @@ mod tests {
         let body = build_body(&n);
         assert!(body.contains("\"fhir_id\":\"123\""));
         assert!(body.contains("\"fhir_version_id\":\"4\""));
-        assert!(body.contains("\"idempotency_key\":\"oscar:demographic:42:0000012345\""));
+        assert!(body.contains("\"idempotency_key\":\"oscar:demographic:42\""));
         assert!(!body.contains("first_name"));
         assert!(!body.contains("phone"));
     }
