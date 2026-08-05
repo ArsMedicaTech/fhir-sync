@@ -23,6 +23,11 @@ bc_msp_practitioner_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-
 [oscar]
 timezone = "America/Vancouver"
 
+# Optional status overrides for site-configurable `appointment.status` codes.
+# Leave a code unmapped to dead-letter it rather than guess.
+# [oscar.appointment_status_map]
+# a = "booked"
+
 [sync]
 checkpoint_path = "/var/lib/fhir-sync/checkpoint.json"
 retry_max_attempts = 5
