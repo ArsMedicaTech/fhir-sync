@@ -13,9 +13,14 @@ pub struct DomainAppointment {
     pub appointment_date: Option<String>, // ISO 8601 date, "YYYY-MM-DD"
     pub start_time:      Option<String>,  // naive local wall-clock, "HH:MM:SS"
     pub end_time:        Option<String>,  // naive local wall-clock, "HH:MM:SS"
-    pub status:          Option<String>,  // raw Oscar status code
+    pub status:          Option<String>,  // raw Oscar status code (case-sensitive)
     pub reason:          Option<String>,
     pub notes:           Option<String>,
+    pub remarks:         Option<String>,
+    pub urgency:         Option<String>,
+    pub createdatetime:  Option<String>,  // ISO 8601 local-ish datetime, "YYYY-MM-DD HH:MM:SS"
+    pub location:        Option<String>,  // deferred to Phase 3+; carried for logging/TODO
+    pub booking_source:  Option<String>,
     #[serde(rename = "type")]
     pub type_:           Option<String>,
 }
@@ -36,6 +41,11 @@ mod tests {
             status: None,
             reason: None,
             notes: None,
+            remarks: None,
+            urgency: None,
+            createdatetime: None,
+            location: None,
+            booking_source: None,
             type_: None,
         };
         assert_eq!(a.appointment_no, "1");
