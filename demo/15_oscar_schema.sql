@@ -157,3 +157,108 @@ CREATE TABLE IF NOT EXISTS demographic_merged (
     lastUpdateUser VARCHAR(6) NULL,
     lastUpdateDate DATE       NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------- dxresearch
+CREATE TABLE IF NOT EXISTS dxresearch (
+    dxresearch_no   INT(10)     NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    demographic_no  INT(10)     NULL DEFAULT 0,
+    start_date      DATE        NULL DEFAULT '0001-01-01',
+    update_date     DATETIME    NOT NULL,
+    status          CHAR(1)     NULL DEFAULT 'A',
+    dxresearch_code VARCHAR(10) NULL DEFAULT '',
+    coding_system   VARCHAR(20) NULL,
+    association     TINYINT(1)  NOT NULL DEFAULT 0,
+    providerNo      VARCHAR(6)  NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ------------------------------------------------------------ diagnosticcode
+-- NOTE the column name: diagnostic_code, NOT code.
+CREATE TABLE IF NOT EXISTS diagnosticcode (
+    diagnosticcode_no INT(5)     NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    diagnostic_code   VARCHAR(5) NOT NULL DEFAULT '',
+    description       TEXT       NULL,
+    status            CHAR(1)    NULL,
+    region            VARCHAR(5) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ------------------------------------------------------------- casemgmt_note
+-- Append-only: editing INSERTs a new row sharing `uuid`. Current revision is
+-- MAX(note_id) per uuid (spec E1). `uuid` is nullable.
+CREATE TABLE IF NOT EXISTS casemgmt_note (
+    note_id                       INT(10)      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    update_date                   DATETIME     NOT NULL DEFAULT '0000-00-00 00:00:00',
+    observation_date              DATETIME     NOT NULL DEFAULT '0000-00-00 00:00:00',
+    demographic_no                INT(10)      NOT NULL DEFAULT 0,
+    provider_no                   VARCHAR(20)  NOT NULL DEFAULT '',
+    note                          MEDIUMTEXT   NOT NULL,
+    signed                        TINYINT(1)   NOT NULL DEFAULT 0,
+    include_issue_innote          TINYINT(1)   NOT NULL DEFAULT 0,
+    signing_provider_no           VARCHAR(20)  NOT NULL DEFAULT '',
+    encounter_type                VARCHAR(100) NOT NULL DEFAULT '',
+    billing_code                  VARCHAR(100) NOT NULL DEFAULT '',
+    program_no                    VARCHAR(20)  NOT NULL DEFAULT '',
+    reporter_caisi_role           VARCHAR(20)  NOT NULL DEFAULT '',
+    reporter_program_team         VARCHAR(20)  NOT NULL DEFAULT '',
+    history                       MEDIUMTEXT   NOT NULL,
+    password                      VARCHAR(255) NULL,
+    locked                        CHAR(1)      NULL,
+    archived                      TINYINT(1)   NULL DEFAULT 0,
+    position                      INT(10)      NULL DEFAULT 0,
+    uuid                          CHAR(36)     NULL,
+    appointmentNo                 INT(10)      NULL,
+    hourOfEncounterTime           INT(11)      NULL,
+    minuteOfEncounterTime         INT(11)      NULL,
+    hourOfEncTransportationTime   INT(11)      NULL,
+    minuteOfEncTransportationTime INT(11)      NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------- casemgmt_note_ext
+CREATE TABLE IF NOT EXISTS casemgmt_note_ext (
+    id         INT(10)     NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    note_id    INT(10)     NOT NULL,
+    key_val    VARCHAR(64) NOT NULL,
+    value      TEXT        NULL,
+    date_value DATE        NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ------------------------------------------- corrections to existing tables
+ALTER TABLE provider
+  MODIFY COLUMN practitionerNoType TEXT NULL,
+  ADD COLUMN supervisor             VARCHAR(6)  NULL,
+  ADD COLUMN rma_no                 VARCHAR(20) NULL,
+  ADD COLUMN hso_no                 VARCHAR(10) NULL,
+  ADD COLUMN comments               TEXT        NULL,
+  ADD COLUMN provider_activity      CHAR(3)     NULL,
+  ADD COLUMN signed_confidentiality DATETIME    NULL;
+
+ALTER TABLE appointment_status
+  MODIFY COLUMN short_letter_colour INT(11)    NULL,
+  MODIFY COLUMN short_letters       VARCHAR(5) NULL;
+
+ALTER TABLE appointment
+  ADD COLUMN program_id        INT(11)     NULL DEFAULT 0,
+  ADD COLUMN reasonCode        INT(11)     NULL,
+  ADD COLUMN resources         TEXT        NULL,
+  ADD COLUMN imported_status   VARCHAR(20) NULL,
+  ADD COLUMN creatorSecurityId INT(11)     NULL,
+  MODIFY COLUMN reason        VARCHAR(80) NULL,
+  MODIFY COLUMN type          VARCHAR(50) NULL,
+  MODIFY COLUMN remarks       VARCHAR(50) NULL,
+  MODIFY COLUMN creator       VARCHAR(50) NULL,
+  MODIFY COLUMN bookingSource VARCHAR(32) NULL;
+
+ALTER TABLE demographic
+  ADD COLUMN myOscarUserName           TEXT         NULL,
+  ADD COLUMN roster_date               DATE         NULL,
+  ADD COLUMN roster_termination_date   DATE         NULL,
+  ADD COLUMN roster_termination_reason VARCHAR(2)   NULL,
+  ADD COLUMN roster_enrolled_to        VARCHAR(20)  NULL,
+  ADD COLUMN pcn_indicator             VARCHAR(20)  NULL,
+  ADD COLUMN hc_renew_date             DATE         NULL,
+  ADD COLUMN previousAddress           TEXT         NULL,
+  ADD COLUMN children                  TEXT         NULL,
+  ADD COLUMN sourceOfIncome            TEXT         NULL,
+  ADD COLUMN newsletter                VARCHAR(32)  NULL,
+  ADD COLUMN anonymous                 VARCHAR(32)  NULL,
+  ADD COLUMN family_physician          VARCHAR(80)  NULL,
+  MODIFY COLUMN sex CHAR(1) NOT NULL DEFAULT '';
