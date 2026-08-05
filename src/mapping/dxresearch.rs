@@ -26,8 +26,13 @@ pub async fn load_diagnostic_codes(db: &DatabaseConfig, oscar: &OscarConfig) -> 
         .await
         .context("connecting to load diagnosticcode")?;
 
-    let rows: Vec<(String, String)> = conn
-        .query("SELECT code, description FROM diagnosticcode")
+    let rows: Vec<(String, String, Option<String>)> = conn
+        .query(
+            "SELECT diagnostic_code, description, region \
+             FROM diagnosticcode \
+             WHERE status = 'A' \
+             ORDER BY region, diagnostic_code",
+        )
         .await
         .context("selecting diagnosticcode")?;
 
@@ -40,6 +45,40 @@ pub async fn load_diagnostic_codes(db: &DatabaseConfig, oscar: &OscarConfig) -> 
     }
 
     info!("loaded {} diagnosticcode rows", map.len());
+
+    let want_region = oscar.region.as_deref();
+    let mut map: HashMap<String, String> = HashMap::with_capacity(rows.len());
+    let mut collisions = 0usize;
+
+    for (code, description, region) in rows {
+        if let Some(want) = want_region {
+            if region.as_deref() != Some(want) {
+                continue;
+            }
+        }
+        if let Some(prev) = map.insert(code.clone(), description.clone()) {
+            if prev != description {
+                collisions += 1;
+                warn!(
+                    "diagnosticcode_collision: code={code} region={region:?} — last row wins"
+                );
+            }
+        }
+    }
+
+    if collisions > 0 {
+        warn!(
+            "{collisions} diagnosticcode codes have conflicting descriptions across \
+             regions; set [oscar] region to make display lookup deterministic"
+        );
+    }
+
+    info!(
+        "loaded {} diagnosticcode rows (status='A', region={:?})",
+        map.len(),
+        want_region
+    );
+
     let _ = DIAGNOSTIC_CODES.set(map);
     Ok(())
 }
