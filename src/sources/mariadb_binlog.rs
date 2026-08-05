@@ -359,7 +359,7 @@ fn column_value_to_string(value: &ColumnValue) -> Option<String> {
         ColumnValue::Float(v) => Some(v.to_string()),
         ColumnValue::Double(v) => Some(v.to_string()),
         ColumnValue::Decimal(s) => Some(s.clone()),
-        ColumnValue::Time(s) => Some(s.clone()),
+        ColumnValue::Time(s) => Some(normalize_time_string(s)),
         ColumnValue::Date(s) => Some(s.clone()),
         ColumnValue::DateTime(s) => Some(s.clone()),
         ColumnValue::Timestamp(v) => Some(v.to_string()),
@@ -371,6 +371,16 @@ fn column_value_to_string(value: &ColumnValue) -> Option<String> {
         ColumnValue::Enum(v) => Some(v.to_string()),
         ColumnValue::Json(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
     }
+}
+
+/// Strips a leading `{days}d` prefix from binlog TIME values. MariaDB's
+/// binlog connector may emit `0d09:00:00` for a TIME column, but downstream
+/// mapping expects the wall-clock form `HH:MM:SS` (D5).
+fn normalize_time_string(s: &str) -> String {
+    if let Some((_, rest)) = s.split_once('d') {
+        return rest.to_string();
+    }
+    s.to_string()
 }
 
 /// Resolves a single Oscar table's column name -> ordinal index.
@@ -476,6 +486,13 @@ mod tests {
         assert_eq!(is_target_table(&tables, 45, "oscar").as_deref(), Some("appointment"));
         assert!(is_target_table(&tables, 42, "other_schema").is_none());
         assert!(is_target_table(&tables, 999, "oscar").is_none()); // unknown table_id (F2)
+    }
+
+    #[test]
+    fn normalize_time_string_strips_days_prefix() {
+        assert_eq!(normalize_time_string("0d09:00:00"), "09:00:00");
+        assert_eq!(normalize_time_string("-0d14:30:00"), "14:30:00");
+        assert_eq!(normalize_time_string("09:00:00"), "09:00:00");
     }
 
     #[test]
