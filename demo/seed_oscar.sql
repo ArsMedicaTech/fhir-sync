@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS demographic (
 -- produces exactly that many Patients").
 INSERT INTO demographic
     (first_name, last_name, year_of_birth, month_of_birth, date_of_birth,
-     sex, email, phone, city, province, country, postal)
+     sex, email, phone, city, province, postal)
 WITH RECURSIVE seq (n) AS (
     SELECT 1
     UNION ALL
@@ -50,6 +50,5 @@ SELECT
     CONCAT('555-01', LPAD(n, 2, '0')),
     'Toronto',
     'ON',
-    'Canada',
     'M5V1A1'
 FROM seq;

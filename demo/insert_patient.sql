@@ -14,10 +14,10 @@ USE oscar;
 
 INSERT INTO demographic
     (first_name, last_name, year_of_birth, month_of_birth, date_of_birth,
-     sex, email, phone, city, province, country, postal)
+     sex, email, phone, address, city, province, postal)
 VALUES
     ('Ada', 'Lovelace', '1985', '12', '10', 'F',
      'ada.lovelace@example.invalid', '555-0199',
-     'Toronto', 'ON', 'Canada', 'M5V1A1');
+     '123 Main St', 'Toronto', 'ON', 'M5V1A1');
 
 SELECT LAST_INSERT_ID() AS demographic_no;

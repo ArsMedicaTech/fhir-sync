@@ -24,11 +24,6 @@
 
 USE oscar;
 
--- ---------------------------------------------------------------- demographic
--- Remove the column real Oscar does not have. This is deliberate: it makes
--- P1 reproducible in CI.
-ALTER TABLE demographic DROP COLUMN country;
-
 -- Add the columns real Oscar has that the minimal demo table lacks.
 -- Types and nullability follow the live 19.x schema.
 ALTER TABLE demographic
