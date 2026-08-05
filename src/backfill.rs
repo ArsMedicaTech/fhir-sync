@@ -40,6 +40,7 @@ const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
     ("provider", "provider_no", practitioner_mapper),
     ("demographic", "demographic_no", patient_mapper),
     ("appointment", "appointment_no", appointment_mapper),
+    ("demographic_merged", "id", merged_patient_mapper),
     ("dxresearch", "dxresearch_no", dxresearch_mapper),
     ("casemgmt_note", "note_id", casemgmt_note_mapper),
 ];
