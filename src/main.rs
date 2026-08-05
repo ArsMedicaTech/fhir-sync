@@ -75,6 +75,9 @@ async fn main() -> anyhow::Result<()> {
     if cfg.oscar_enabled && std::env::args().any(|a| a == "--backfill") {
         let total = backfill::run(&cfg, &tx, &metrics).await?;
         info!("backfill: sent {total} resources");
+        drop(tx);
+        let _ = sink_task.await;
+        return Ok(());
     }
 
     let source_task = if cfg.oscar_enabled {
