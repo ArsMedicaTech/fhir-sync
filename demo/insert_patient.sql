@@ -13,10 +13,10 @@
 USE oscar;
 
 INSERT INTO demographic
-    (first_name, last_name, year_of_birth, month_of_birth, date_of_birth,
+    (demographic_no, first_name, last_name, year_of_birth, month_of_birth, date_of_birth,
      sex, email, phone, address, city, province, postal)
 VALUES
-    ('Ada', 'Lovelace', '1985', '12', '10', 'F',
+    (199, 'Ada', 'Lovelace', '1985', '12', '10', 'F',
      'ada.lovelace@example.invalid', '555-0199',
      '123 Main St', 'Toronto', 'ON', 'M5V1A1');
 
