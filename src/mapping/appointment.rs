@@ -4,6 +4,7 @@ use tracing::info;
 
 use crate::domain::appointment::DomainAppointment;
 use crate::sources::RowChange;
+use crate::mapping::syncable_provider;
 
 /// Column name -> zero-based index in `RowChange.after`, as resolved from
 /// `information_schema.columns` at startup (D3). Never hardcode indexes.
@@ -38,10 +39,8 @@ pub fn row_to_domain_appointment(change: &RowChange, columns: &ColumnMap) -> Opt
         return None;
     }
 
-    let provider_no = lookup(change, columns, "provider_no").map(str::to_string);
-
     // D3: the synthetic system actor must not appear as a participant.
-    let provider_no = provider_no.filter(|p| p != "-1");
+    let provider_no = syncable_provider(lookup(change, columns, "provider_no"));
 
     Some(DomainAppointment {
         appointment_no,

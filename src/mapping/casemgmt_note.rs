@@ -6,6 +6,7 @@ use crate::domain::document_reference::{DomainDocumentReference, NoteLink};
 use crate::domain::encounter::DomainEncounter;
 use crate::domain::resource::DomainResource;
 use crate::sources::RowChange;
+use crate::mapping::syncable_provider;
 
 pub type ColumnMap = HashMap<String, usize>;
 
@@ -56,11 +57,11 @@ pub fn row_to_casemgmt_note_resources(
     let demographic_no = lookup(change, columns, "demographic_no")
         .map(str::to_string)
         .unwrap_or_default();
-    let mut provider_no = lookup_any(change, columns, &["provider_no", "providerNo"]).map(str::to_string);
-    if provider_no.as_deref() == Some("-1") {
-        provider_no = None;
-    }
-    let signing_provider_no = lookup_any(change, columns, &["signing_provider_no", "signingProviderNo"]).map(str::to_string);
+    
+    let provider_no = syncable_provider(lookup_any(change, columns, &["provider_no", "providerNo"]));
+    
+    let signing_provider_no = syncable_provider(lookup_any(change, columns, &["signing_provider_no", "signingProviderNo"]));
+    
     let observation_date = lookup_any(change, columns, &["observation_date", "observationDate"]).map(str::to_string);
     let update_date = lookup_any(change, columns, &["update_date", "updateDate"]).map(str::to_string);
     let encounter_type = lookup(change, columns, "encounter_type").map(str::to_string);

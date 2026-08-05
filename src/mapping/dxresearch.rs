@@ -8,6 +8,7 @@ use tracing::{info, warn};
 use crate::config::{DatabaseConfig, OscarConfig};
 use crate::domain::condition::DomainCondition;
 use crate::sources::RowChange;
+use crate::mapping::syncable_provider;
 
 pub type ColumnMap = HashMap<String, usize>;
 
@@ -105,7 +106,8 @@ pub fn row_to_domain_condition(change: &RowChange, columns: &ColumnMap) -> Optio
     let status = lookup(change, columns, "status")?;
     let start_date = lookup(change, columns, "start_date").map(str::to_string);
 
-    let mut provider_no = lookup(change, columns, "providerNo").map(str::to_string);
+    let provider_no = syncable_provider(lookup(change, columns, "providerNo"));
+
     // D5: '-1' is Oscar's system actor and is never synced as a Practitioner.
     // Emitting it as `recorder` produces an unsatisfiable conditional
     // reference (HAPI-1091). Mirror casemgmt_note.rs:59-62.

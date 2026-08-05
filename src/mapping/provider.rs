@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::domain::practitioner::DomainPractitioner;
 use crate::sources::RowChange;
+use crate::mapping::syncable_provider;
 use tracing::warn;
 
 pub type ColumnMap = HashMap<String, usize>;
@@ -26,7 +27,7 @@ pub fn row_to_domain_practitioner(change: &RowChange, columns: &ColumnMap) -> Op
     let provider_no = lookup(change, columns, "provider_no")?;
 
     // D3: the synthetic system actor must never become a Practitioner.
-    if provider_no == "-1" {
+    if syncable_provider(Some(provider_no)).is_none() {
         return None;
     }
 
