@@ -119,14 +119,16 @@ pub fn row_to_casemgmt_note_resources(
     // Determine the FHIR Encounter.class to validate the encounter_type value.
     match resolve_class(&encounter) {
         Some(_) => {
-            let mut out = vec![
-                DomainResource::DocumentReference(doc_ref),
-            ];
+            let mut out = Vec::with_capacity(2);
+            // Encounter must precede DocumentReference: the DocumentReference's
+            // `context.encounter` is a conditional reference that HAPI resolves
+            // at write time, so the Encounter has to already exist (HAPI-1091).
             if !is_administrative_only(&encounter) {
                 out.push(DomainResource::Encounter(encounter));
             } else {
                 info!("casemgmt_note mapping: note_id={} is 'encounter without client'; emitting DocumentReference only", note_id_for_info);
             }
+            out.push(DomainResource::DocumentReference(doc_ref));
             out
         }
         None => {
