@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 //use prost::Message;
 
-use crate::domain::patient::DomainPatient;
+use crate::domain::patient::{DomainAddress, DomainPatient};
 
 // Generated modules ---------------------------------------------
 // (path depends on how you configured `tonic_build`)
@@ -118,12 +118,13 @@ impl From<DomainPatient> for Patient {
 
         // ------------------------------------------------------------------
         // 7. Address  -------------------------------------------------------
-        if let Some((city, province, country, postal)) = src.location {
+        for addr in &src.addresses {
             dest.address.push(Address {
-                city:        Some(String { value: city,      ..Default::default() }),
-                state:       Some(String { value: province,  ..Default::default() }),
-                country:     Some(String { value: country,   ..Default::default() }),
-                postal_code: Some(String { value: postal,    ..Default::default() }),
+                line:        addr.line.clone().map(|l| vec![String { value: l, ..Default::default() }]).unwrap_or_default(),
+                city:        addr.city.clone().map(|v| String { value: v, ..Default::default() }),
+                state:       addr.province.clone().map(|v| String { value: v, ..Default::default() }),
+                country:     Some(String { value: "CA".to_string(), ..Default::default() }),
+                postal_code: addr.postal.clone().map(|v| String { value: v, ..Default::default() }),
                 ..Default::default()
             });
         }
