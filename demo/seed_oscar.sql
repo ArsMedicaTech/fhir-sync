@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS demographic (
     hin            VARCHAR(20),
     city           VARCHAR(100),
     province       VARCHAR(10),
-    country        VARCHAR(50),
     postal         VARCHAR(10)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
