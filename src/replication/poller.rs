@@ -565,7 +565,7 @@ mod suppression_tests {
 
     #[test]
     fn matches_hapi_source_with_request_id_fragment() {
-        // Observed from hapiproject/hapi:v7.2.0
+        // Observed from hapiproject/hapi:v8.10.0
         assert!(source_tag_matches(
             "urn:arsmedicatech:fhir-sync:node-a#FRkkUAMqHdNorySm",
             "urn:arsmedicatech:fhir-sync:node-a"

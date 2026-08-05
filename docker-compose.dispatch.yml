@@ -9,7 +9,7 @@
 
 services:
   hapi-a:
-    image: hapiproject/hapi:v7.2.0
+    image: hapiproject/hapi:v8.10.0
     environment:
       - hapi.fhir.fhir_version=R4
     ports:
