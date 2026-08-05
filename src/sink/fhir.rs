@@ -11,14 +11,17 @@ use std::io::Write;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use fhirbolt::model::r4b::resources::{Patient, PatientDeceased, PatientLink, Practitioner};
-use fhirbolt::model::r4b::types::{Address, CodeableConcept, ContactPoint, HumanName, Identifier, Meta, Reference};
+use fhirbolt::model::r4b::resources::{Appointment, AppointmentParticipant, Bundle, BundleEntry, BundleEntryRequest, Patient, PatientDeceased, PatientLink, Practitioner};
+use fhirbolt::model::r4b::Resource as FhirResource;
+use fhirbolt::model::r4b::types::{Address, CodeableConcept, ContactPoint, Extension, ExtensionValue, HumanName, Identifier, Meta, Reference};
+use chrono::{LocalResult, NaiveDate, NaiveTime, TimeZone};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
 use crate::auth::TokenProvider;
-use crate::config::{Config, FhirConfig};
+use crate::config::{Config, FhirConfig, OscarConfig};
 use crate::dispatch::DispatchNotification;
+use crate::domain::appointment::DomainAppointment;
 use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatient};
 use crate::domain::practitioner::DomainPractitioner;
 use crate::domain::resource::DomainResource;
@@ -108,7 +111,7 @@ async fn sync_with_retry(
 
     let mut last_err = None;
     for attempt in 0..max_attempts {
-        match sync_one(client, &cfg.fhir, token_provider, event).await {
+        match sync_one(client, cfg, token_provider, event).await {
             Ok(res) => return Ok(res),
             Err(SyncFailure::Permanent(e)) => {
                 warn!(
@@ -211,10 +214,11 @@ fn build_put_request(
 
 async fn sync_one(
     client: &reqwest::Client,
-    fhir_cfg: &FhirConfig,
+    cfg: &Config,
     token_provider: Option<&TokenProvider>,
     event: &SyncEvent,
 ) -> Result<FhirResult, SyncFailure> {
+    let fhir_cfg = &cfg.fhir;
     let token: Option<String> = match token_provider {
         Some(tp) => Some(tp.token().await.map_err(SyncFailure::Retryable)?),
         None => fhir_cfg
@@ -230,16 +234,8 @@ async fn sync_one(
         DomainResource::Practitioner(practitioner) => {
             sync_practitioner(client, fhir_cfg, token, event, practitioner).await
         }
-        other => {
-            warn!(
-                "fhir sink: unsupported resource type {:?} for {}",
-                event.resource_type(),
-                event.idempotency_key()
-            );
-            Err(SyncFailure::Permanent(anyhow::anyhow!(
-                "unsupported resource type {:?}",
-                event.resource_type()
-            )))
+        DomainResource::Appointment(appointment) => {
+            sync_appointment(client, fhir_cfg, token, event, appointment, &cfg.oscar).await
         }
     }
 }
@@ -389,6 +385,101 @@ async fn sync_practitioner(
     }
 
     let identifier = format!("{}|{}", fhir_cfg.oscar_provider_system, practitioner.provider_no);
+    info!(
+        "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
+        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+    );
+    Ok(result)
+}
+
+const OSCAR_APPOINTMENT_STATUS_SYSTEM: &str = "https://arsmedicatech.com/fhir/sid/oscar-appointment-status";
+const OSCAR_BOOKING_SOURCE_URL: &str = "https://arsmedicatech.com/fhir/StructureDefinition/oscar-booking-source";
+
+async fn sync_appointment(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    appointment: &DomainAppointment,
+    oscar_cfg: &OscarConfig,
+) -> Result<FhirResult, SyncFailure> {
+    let fhir_appointment = build_appointment(appointment, fhir_cfg, oscar_cfg, event.op())?;
+    let bundle = build_appointment_bundle(&fhir_appointment, fhir_cfg, event);
+
+    let body = fhirbolt::json::to_string(&bundle, None)
+        .context("serializing FHIR transaction Bundle")
+        .map_err(SyncFailure::Permanent)?;
+
+    let base = fhir_cfg.base_url.trim_end_matches('/');
+    let mut req = client
+        .post(base)
+        .header("Content-Type", "application/fhir+json");
+
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+
+    let resp = req
+        .body(body)
+        .send()
+        .await
+        .with_context(|| "sending transaction Bundle to HAPI")
+        .map_err(SyncFailure::Retryable)?;
+    let status = resp.status();
+
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        let err = anyhow::anyhow!("HAPI transaction Bundle failed ({status}): {text}");
+        if status.is_client_error() && status.as_u16() != 429 {
+            return Err(SyncFailure::Permanent(err));
+        }
+        return Err(SyncFailure::Retryable(err));
+    }
+
+    let body_text = resp.text().await.unwrap_or_default();
+    let mut result = FhirResult {
+        fhir_id: String::new(),
+        version_id: None,
+    };
+
+    if !body_text.trim().is_empty() {
+        if let Ok(response_bundle) = fhirbolt::json::from_str::<Bundle>(&body_text, None) {
+            if let Some(entry) = response_bundle.entry.first() {
+                if let Some(response) = &entry.response {
+                    let entry_status = response
+                        .status
+                        .value
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if !entry_status.starts_with('2') {
+                        return Err(SyncFailure::Permanent(anyhow::anyhow!(
+                            "HAPI transaction Bundle entry failed with status '{entry_status}'"
+                        )));
+                    }
+
+                    if let Some(loc) = response
+                        .location
+                        .as_ref()
+                        .and_then(|l| l.value.as_deref())
+                    {
+                        result.fhir_id = parse_location_id(loc).unwrap_or_default();
+                        result.version_id = parse_location_version_id(loc);
+                    }
+
+                    if result.fhir_id.is_empty() {
+                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref()) {
+                            // W/"Appointment/123/_history/2" or just the id.
+                            result.fhir_id = parse_location_id(etag).unwrap_or_default();
+                            result.version_id = parse_location_version_id(etag);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let identifier = format!("{}|{}", fhir_cfg.oscar_appointment_system, appointment.appointment_no);
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
         event.idempotency_key(), identifier, result.fhir_id, result.version_id
@@ -675,6 +766,240 @@ fn practitioner_active(payload: &DomainPractitioner) -> bool {
     }
 }
 
+/// Converts a naive local `appointment_date` + `start_time`/`end_time` into an
+/// RFC 3339 string using the configured IANA timezone (D5).
+///
+/// Returns `SyncFailure::Permanent` for nonexistent local times. For ambiguous
+/// times (fall-back) the first (DST) candidate is chosen and a `warn!` names
+/// both candidates.
+fn to_appointment_instant(
+    date: &str,
+    time: &str,
+    tz_name: &str,
+) -> Result<String, SyncFailure> {
+    let naive_date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid appointment_date '{date}': {e}")))?;
+    let naive_time = NaiveTime::parse_from_str(time, "%H:%M:%S")
+        .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid start/end_time '{time}': {e}")))?;
+    let naive = naive_date
+        .and_time(naive_time)
+        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("invalid appointment date/time '{date} {time}'")))?;
+
+    let tz: chrono_tz::Tz = tz_name
+        .parse()
+        .map_err(|_| SyncFailure::Permanent(anyhow::anyhow!("invalid IANA timezone '{tz_name}'")))?;
+
+    let dt = match tz.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => dt,
+        LocalResult::Ambiguous(dt1, dt2) => {
+            warn!(
+                "appointment time {naive} is ambiguous in {tz_name}: candidates {} and {}; taking first",
+                dt1.to_rfc3339(), dt2.to_rfc3339()
+            );
+            dt1
+        }
+        LocalResult::None => {
+            return Err(SyncFailure::Permanent(anyhow::anyhow!(
+                "nonexistent_local_time: {naive} {tz_name}"
+            )));
+        }
+    };
+
+    Ok(dt.to_rfc3339())
+}
+
+/// Computes `minutesDuration` from the naive local start and end times (D5).
+fn appointment_minutes_duration(start: &str, end: &str) -> Option<u32> {
+    let start = NaiveTime::parse_from_str(start, "%H:%M:%S").ok()?;
+    let end = NaiveTime::parse_from_str(end, "%H:%M:%S").ok()?;
+    let seconds = (end - start).num_seconds();
+    if seconds > 0 { Some((seconds / 60) as u32) } else { None }
+}
+
+fn build_appointment(
+    payload: &DomainAppointment,
+    fhir_cfg: &FhirConfig,
+    oscar_cfg: &OscarConfig,
+    op: Op,
+) -> Result<Appointment, SyncFailure> {
+    let mut appt = Appointment::default();
+
+    appt.meta = Some(Box::new(Meta {
+        source: Some(META_SOURCE.into()),
+        ..Default::default()
+    }));
+
+    appt.identifier.push(Identifier {
+        system: Some(fhir_cfg.oscar_appointment_system.clone().into()),
+        value: Some(payload.appointment_no.clone().into()),
+        ..Default::default()
+    });
+
+    let raw_status = payload.status.as_deref().map(|s| s.trim());
+
+    if let Some(code) = raw_status {
+        appt.identifier.push(Identifier {
+            system: Some(OSCAR_APPOINTMENT_STATUS_SYSTEM.into()),
+            value: Some(code.into()),
+            ..Default::default()
+        });
+    }
+
+    let fhir_status = if op == Op::Delete {
+        "cancelled"
+    } else {
+        match raw_status {
+            Some(code) => oscar_cfg
+                .appointment_status_map
+                .get(code)
+                .map(String::as_str)
+                .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("unmapped_appointment_status: {code}")))?,
+            None => {
+                return Err(SyncFailure::Permanent(anyhow::anyhow!(
+                    "appointment_no={} has no status",
+                    payload.appointment_no
+                )));
+            }
+        }
+    };
+    appt.status = fhir_status.into();
+
+    let tz = oscar_cfg
+        .timezone
+        .as_deref()
+        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("missing oscar timezone")))?;
+
+    if let (Some(date), Some(start)) = (payload.appointment_date.as_deref(), payload.start_time.as_deref()) {
+        appt.start = Some(to_appointment_instant(date, start, tz)?.into());
+    }
+
+    if let (Some(date), Some(end)) = (payload.appointment_date.as_deref(), payload.end_time.as_deref()) {
+        appt.end = Some(to_appointment_instant(date, end, tz)?.into());
+    }
+
+    if let (Some(start), Some(end)) = (payload.start_time.as_deref(), payload.end_time.as_deref()) {
+        if let Some(minutes) = appointment_minutes_duration(start, end) {
+            appt.minutes_duration = Some(minutes.into());
+        }
+    }
+
+    if let Some(type_) = &payload.type_ {
+        appt.appointment_type = Some(Box::new(CodeableConcept {
+            text: Some(type_.clone().into()),
+            ..Default::default()
+        }));
+    }
+
+    if let Some(reason) = &payload.reason {
+        appt.reason_code.push(CodeableConcept {
+            text: Some(reason.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    match (&payload.notes, &payload.remarks) {
+        (Some(notes), Some(remarks)) => {
+            appt.comment = Some(format!("{notes} / {remarks}").into());
+        }
+        (Some(notes), None) => appt.comment = Some(notes.clone().into()),
+        (None, Some(remarks)) => appt.comment = Some(remarks.clone().into()),
+        (None, None) => {}
+    }
+
+    if let Some(urgency) = &payload.urgency {
+        if let Ok(value) = urgency.trim().parse::<u32>() {
+            appt.priority = Some(value.into());
+        } else {
+            warn!(
+                "build_appointment: non-numeric urgency '{}' for appointment_no={}",
+                urgency, payload.appointment_no
+            );
+        }
+    }
+
+    if let Some(created) = &payload.createdatetime {
+        appt.created = Some(created.replace(' ', "T").into());
+    }
+
+    if let Some(source) = &payload.booking_source {
+        appt.extension.push(Extension {
+            url: OSCAR_BOOKING_SOURCE_URL.to_string(),
+            value: Some(ExtensionValue::String(source.clone().into())),
+            ..Default::default()
+        });
+    }
+
+    let mut participants = Vec::new();
+
+    if let Some(demographic_no) = &payload.demographic_no {
+        let sys: String = url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes()).collect();
+        let val: String = url::form_urlencoded::byte_serialize(demographic_no.as_bytes()).collect();
+        participants.push(AppointmentParticipant {
+            actor: Some(Box::new(Reference {
+                reference: Some(format!("Patient?identifier={sys}|{val}").into()),
+                ..Default::default()
+            })),
+            required: Some("required".into()),
+            status: "accepted".into(),
+            ..Default::default()
+        });
+    }
+
+    if let Some(provider_no) = &payload.provider_no {
+        let sys: String = url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
+        let val: String = url::form_urlencoded::byte_serialize(provider_no.as_bytes()).collect();
+        participants.push(AppointmentParticipant {
+            actor: Some(Box::new(Reference {
+                reference: Some(format!("Practitioner?identifier={sys}|{val}").into()),
+                ..Default::default()
+            })),
+            required: Some("required".into()),
+            status: "accepted".into(),
+            ..Default::default()
+        });
+    }
+
+    if participants.is_empty() {
+        return Err(SyncFailure::Permanent(anyhow::anyhow!(
+            "unmappable_appointment: appointment_no={} has no participants",
+            payload.appointment_no
+        )));
+    }
+    appt.participant = participants;
+
+    Ok(appt)
+}
+
+/// Builds a transaction Bundle containing a single conditional PUT for the
+/// supplied Appointment (D4). Using a transaction lets HAPI resolve the
+/// conditional `Patient?identifier=...` and `Practitioner?identifier=...`
+/// references inside the `Appointment.participant` list.
+fn build_appointment_bundle(
+    fhir_appointment: &Appointment,
+    fhir_cfg: &FhirConfig,
+    event: &SyncEvent,
+) -> Bundle {
+    let sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_appointment_system.as_bytes()).collect();
+    let val: String =
+        url::form_urlencoded::byte_serialize(event.payload().source_id().as_bytes()).collect();
+    let conditional_url = format!("{}?identifier={sys}|{val}", event.resource_type().as_path());
+
+    let mut bundle = Bundle::default();
+    bundle.r#type = "transaction".into();
+    bundle.entry.push(BundleEntry {
+        full_url: Some(format!("urn:uuid:{}", event.idempotency_key()).into()),
+        resource: Some(FhirResource::Appointment(Box::new(fhir_appointment.clone()))),
+        request: Some(Box::new(BundleEntryRequest {
+            method: "PUT".into(),
+            url: conditional_url.into(),
+            ..Default::default()
+        })),
+        ..Default::default()
+    });
+    bundle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,6 +1025,129 @@ mod tests {
             token_env: None,
             keycloak: None,
         }
+    }
+
+    fn oscar_cfg() -> OscarConfig {
+        OscarConfig {
+            timezone: Some("America/Vancouver".to_string()),
+            appointment_status_map: crate::config::OscarConfig::default().appointment_status_map,
+        }
+    }
+
+    fn appt_payload() -> DomainAppointment {
+        DomainAppointment {
+            appointment_no: "1".to_string(),
+            demographic_no: Some("101".to_string()),
+            provider_no: Some("100001".to_string()),
+            appointment_date: Some("2026-08-10".to_string()),
+            start_time: Some("09:00:00".to_string()),
+            end_time: Some("09:15:00".to_string()),
+            status: Some("t".to_string()),
+            reason: Some("Follow-up".to_string()),
+            notes: Some("note one".to_string()),
+            remarks: Some("note two".to_string()),
+            urgency: Some("3".to_string()),
+            createdatetime: Some("2026-08-09 16:30:00".to_string()),
+            location: Some("Room A".to_string()),
+            booking_source: Some("online".to_string()),
+            type_: Some("Regular".to_string()),
+        }
+    }
+
+    #[test]
+    fn build_appointment_maps_all_fields() {
+        let appt = build_appointment(&appt_payload(), &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
+
+        assert_eq!(appt.identifier.len(), 2);
+        assert_eq!(appt.identifier[0].value, Some("1".to_string().into()));
+        assert_eq!(appt.identifier[1].value, Some("t".to_string().into()));
+        assert_eq!(appt.status.value, Some("booked".to_string()));
+        assert_eq!(appt.start.as_ref().map(|i| i.value.clone()), Some(Some("2026-08-10T09:00:00-07:00".to_string())));
+        assert_eq!(appt.end.as_ref().map(|i| i.value.clone()), Some(Some("2026-08-10T09:15:00-07:00".to_string())));
+        assert_eq!(appt.minutes_duration.as_ref().map(|m| m.value), Some(Some(15)));
+        assert_eq!(appt.appointment_type.as_ref().and_then(|c| c.text.as_ref()).and_then(|s| s.value.clone()), Some("Regular".to_string()));
+        assert_eq!(appt.reason_code.len(), 1);
+        assert_eq!(appt.comment.as_ref().map(|s| s.value.clone()), Some(Some("note one / note two".to_string())));
+        assert_eq!(appt.priority.as_ref().map(|u| u.value), Some(Some(3)));
+        assert_eq!(appt.created.as_ref().map(|d| d.value.clone()), Some(Some("2026-08-09T16:30:00".to_string())));
+        assert_eq!(appt.extension.len(), 1);
+        assert_eq!(appt.participant.len(), 2);
+        assert!(appt.participant[0].actor.as_ref().unwrap().reference.as_ref().unwrap().value.as_ref().unwrap().starts_with("Patient?identifier"));
+        assert!(appt.participant[1].actor.as_ref().unwrap().reference.as_ref().unwrap().value.as_ref().unwrap().starts_with("Practitioner?identifier"));
+    }
+
+    #[test]
+    fn build_appointment_bundle_contains_conditional_put() {
+        let cfg = fhir_cfg();
+        let payload = appt_payload();
+        let event = SyncEvent::new(
+            Source::OscarBinlog { table: "appointment".to_string() },
+            Op::Upsert,
+            DomainResource::Appointment(payload.clone()),
+            chrono::Utc::now(),
+        );
+
+        let appt = build_appointment(&payload, &cfg, &oscar_cfg(), Op::Upsert).unwrap();
+        let bundle = build_appointment_bundle(&appt, &cfg, &event);
+
+        assert_eq!(bundle.r#type.value.as_deref(), Some("transaction"));
+        assert_eq!(bundle.entry.len(), 1);
+
+        let request = bundle.entry[0].request.as_ref().unwrap();
+        assert_eq!(request.method.value.as_deref(), Some("PUT"));
+        let url = request.url.value.as_deref().unwrap();
+        assert!(url.starts_with("Appointment?identifier="));
+        assert!(url.contains("oscar-appointment"));
+        assert!(url.contains("1"));
+
+        assert!(matches!(
+            bundle.entry[0].resource,
+            Some(FhirResource::Appointment(_))
+        ));
+    }
+
+    #[test]
+    fn build_appointment_delete_sets_cancelled() {
+        let appt = build_appointment(&appt_payload(), &fhir_cfg(), &oscar_cfg(), Op::Delete).unwrap();
+        assert_eq!(appt.status.value, Some("cancelled".to_string()));
+    }
+
+    #[test]
+    fn build_appointment_unmapped_status_dead_letters() {
+        let mut payload = appt_payload();
+        payload.status = Some("a".to_string());
+        let err = build_appointment(&payload, &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap_err();
+        assert!(err.to_string().contains("unmapped_appointment_status"));
+    }
+
+    #[test]
+    fn build_appointment_nonexistent_time_dead_letters() {
+        let mut payload = appt_payload();
+        payload.appointment_date = Some("2026-03-08".to_string());
+        payload.start_time = Some("02:30:00".to_string());
+        payload.end_time = Some("02:45:00".to_string());
+        let err = build_appointment(&payload, &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap_err();
+        assert!(err.to_string().contains("nonexistent_local_time"));
+    }
+
+    #[test]
+    fn build_appointment_ambiguous_time_takes_first_candidate() {
+        let mut payload = appt_payload();
+        payload.appointment_date = Some("2026-11-01".to_string());
+        payload.start_time = Some("01:30:00".to_string());
+        payload.end_time = Some("01:45:00".to_string());
+        let appt = build_appointment(&payload, &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
+        assert!(appt.start.as_ref().unwrap().value.as_ref().unwrap().contains("-07:00"));
+        assert!(appt.end.as_ref().unwrap().value.as_ref().unwrap().contains("-07:00"));
+    }
+
+    #[test]
+    fn build_appointment_omits_practitioner_participant() {
+        let mut payload = appt_payload();
+        payload.provider_no = None;
+        let appt = build_appointment(&payload, &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
+        assert_eq!(appt.participant.len(), 1);
+        assert!(appt.participant[0].actor.as_ref().unwrap().reference.as_ref().unwrap().value.as_ref().unwrap().starts_with("Patient"));
     }
 
     #[test]

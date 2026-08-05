@@ -26,24 +26,42 @@ pub struct Config {
     pub oscar: OscarConfig,
 }
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct OscarConfig {
     /// IANA timezone name used to interpret Oscar's local date/time columns
-    /// (appointments, provider schedules). See chrono-tz.
-    #[serde(default = "default_oscar_timezone")]
-    pub timezone: String,
+    /// (appointments, provider schedules). See chrono-tz. Required when
+    /// `oscar_enabled` is `true`.
+    pub timezone: Option<String>,
+    /// Config overrides for `appointment.status` codes not covered by the
+    /// stock mapping (the `a`–`e` custom codes). Maps the raw Oscar code to
+    /// a FHIR `Appointment.status` value (e.g. "booked").
+    #[serde(default = "default_appointment_status_map")]
+    pub appointment_status_map: HashMap<String, String>,
 }
 
 impl Default for OscarConfig {
     fn default() -> Self {
         Self {
-            timezone: default_oscar_timezone(),
+            timezone: None,
+            appointment_status_map: default_appointment_status_map(),
         }
     }
 }
 
-fn default_oscar_timezone() -> String {
-    "America/Vancouver".to_string()
+fn default_appointment_status_map() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    m.insert("t".to_string(), "booked".to_string());
+    m.insert("T".to_string(), "booked".to_string());
+    m.insert("h".to_string(), "booked".to_string());
+    m.insert("H".to_string(), "checked-in".to_string());
+    m.insert("P".to_string(), "checked-in".to_string());
+    m.insert("E".to_string(), "checked-in".to_string());
+    m.insert("B".to_string(), "fulfilled".to_string());
+    m.insert("C".to_string(), "cancelled".to_string());
+    m.insert("N".to_string(), "noshow".to_string());
+    m
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -541,6 +559,38 @@ pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) 
     Ok(())
 }
 
+/// Validates Oscar-specific config. Fatal on error when `oscar_enabled`.
+pub fn validate_oscar(cfg: &Config) -> anyhow::Result<()> {
+    if !cfg.oscar_enabled {
+        return Ok(());
+    }
+
+    let tz = cfg
+        .oscar
+        .timezone
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("[oscar] timezone is required when oscar_enabled is true"))?;
+
+    if tz.parse::<chrono_tz::Tz>().is_err() {
+        anyhow::bail!("[oscar] timezone '{tz}' is not a valid IANA timezone");
+    }
+
+    // Status map values must be valid FHIR Appointment.status codes.
+    const VALID_STATUS: &[&str] = &[
+        "proposed", "pending", "booked", "arrived", "fulfilled", "cancelled", "noshow",
+        "entered-in-error", "checked-in", "waitlist",
+    ];
+    for (code, status) in &cfg.oscar.appointment_status_map {
+        if !VALID_STATUS.iter().any(|v| v.eq_ignore_ascii_case(status)) {
+            anyhow::bail!(
+                "[oscar.appointment_status_map] code '{code}' maps to unknown FHIR status '{status}'"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Loads `Config.toml` from `CONFIG_PATH` if set, otherwise from the CWD.
 pub fn load_config() -> anyhow::Result<Config> {
     let path = env::var("CONFIG_PATH").unwrap_or_else(|_| "Config.toml".to_string());
@@ -560,6 +610,7 @@ pub fn load_config() -> anyhow::Result<Config> {
 
     validate_replication(&config.replication, &config.dispatch)?;
     validate_dispatch(&config.dispatch)?;
+    validate_oscar(&config)?;
 
     Ok(config)
 }
@@ -672,5 +723,77 @@ mod tests {
         let cfg = DispatchConfig::default();
         assert!(!cfg.enabled);
         assert!(validate_dispatch(&cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_oscar_requires_timezone() {
+        let cfg = Config {
+            database: DatabaseConfig::default(),
+            server: ServerConfig::default(),
+            fhir: FhirConfig::default(),
+            sync: SyncConfig::default(),
+            replication: ReplicationConfig::default(),
+            dispatch: DispatchConfig::default(),
+            oscar_enabled: true,
+            oscar: OscarConfig::default(),
+            debug: None,
+        };
+        let err = validate_oscar(&cfg).unwrap_err().to_string();
+        assert!(err.contains("timezone is required"));
+    }
+
+    #[test]
+    fn validate_oscar_rejects_invalid_timezones() {
+        let cfg = Config {
+            database: DatabaseConfig::default(),
+            server: ServerConfig::default(),
+            fhir: FhirConfig::default(),
+            sync: SyncConfig::default(),
+            replication: ReplicationConfig::default(),
+            dispatch: DispatchConfig::default(),
+            oscar_enabled: true,
+            oscar: OscarConfig {
+                timezone: Some("Mars/Opportunity".to_string()),
+                appointment_status_map: OscarConfig::default().appointment_status_map,
+            },
+            debug: None,
+        };
+        let err = validate_oscar(&cfg).unwrap_err().to_string();
+        assert!(err.contains("not a valid IANA timezone"));
+    }
+
+    #[test]
+    fn validate_oscar_allows_valid_timezones() {
+        let cfg = Config {
+            database: DatabaseConfig::default(),
+            server: ServerConfig::default(),
+            fhir: FhirConfig::default(),
+            sync: SyncConfig::default(),
+            replication: ReplicationConfig::default(),
+            dispatch: DispatchConfig::default(),
+            oscar_enabled: true,
+            oscar: OscarConfig {
+                timezone: Some("America/Vancouver".to_string()),
+                appointment_status_map: OscarConfig::default().appointment_status_map,
+            },
+            debug: None,
+        };
+        assert!(validate_oscar(&cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_oscar_skipped_when_disabled() {
+        let cfg = Config {
+            database: DatabaseConfig::default(),
+            server: ServerConfig::default(),
+            fhir: FhirConfig::default(),
+            sync: SyncConfig::default(),
+            replication: ReplicationConfig::default(),
+            dispatch: DispatchConfig::default(),
+            oscar_enabled: false,
+            oscar: OscarConfig::default(),
+            debug: None,
+        };
+        assert!(validate_oscar(&cfg).is_ok());
     }
 }

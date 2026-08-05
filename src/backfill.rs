@@ -18,6 +18,7 @@ use crate::checkpoint::{self, Checkpoint};
 use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
+use crate::mapping::appointment::row_to_domain_appointment;
 use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
 use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
@@ -26,11 +27,12 @@ use crate::sources::{RowChange, RowOp, SourcePosition};
 
 const DEMOGRAPHIC_TABLE: &str = "demographic";
 const PROVIDER_TABLE: &str = "provider";
+const APPOINTMENT_TABLE: &str = "appointment";
 const BATCH_SIZE: u64 = 500;
 
-/// Runs one backfill pass over `demographic` then `provider`, sending every
-/// row through `tx` as an `Upsert` `SyncEvent`. Returns the total number of
-/// resources sent.
+/// Runs one backfill pass over `provider`, `demographic`, then `appointment`,
+/// sending every row through `tx` as an `Upsert` `SyncEvent`. Returns the total
+/// number of resources sent.
 pub async fn run(
     cfg: &Config,
     tx: &Sender<SyncEvent>,
@@ -53,6 +55,7 @@ pub async fn run(
 
     let demo_columns = resolve_column_map_for_table(db, DEMOGRAPHIC_TABLE).await?;
     let provider_columns = resolve_column_map_for_table(db, PROVIDER_TABLE).await?;
+    let appt_columns = resolve_column_map_for_table(db, APPOINTMENT_TABLE).await?;
 
     let url = format!(
         "mysql://{}:{}@{}:{}/{}",
@@ -65,6 +68,20 @@ pub async fn run(
         .context("connecting for backfill scan")?;
 
     let mut total = 0usize;
+
+    // Practitioner first so that when we eventually move to literal references
+    // the dependency order is already sensible.
+    total += scan_table(
+        &mut conn,
+        db,
+        PROVIDER_TABLE,
+        "provider_no",
+        &provider_columns,
+        tx,
+        metrics,
+        practitioner_mapper,
+    )
+    .await?;
 
     total += scan_table(
         &mut conn,
@@ -81,12 +98,12 @@ pub async fn run(
     total += scan_table(
         &mut conn,
         db,
-        PROVIDER_TABLE,
-        "provider_no",
-        &provider_columns,
+        APPOINTMENT_TABLE,
+        "appointment_no",
+        &appt_columns,
         tx,
         metrics,
-        practitioner_mapper,
+        appointment_mapper,
     )
     .await?;
 
@@ -103,6 +120,10 @@ fn patient_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResou
 
 fn practitioner_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
     row_to_domain_practitioner(change, columns).map(DomainResource::Practitioner)
+}
+
+fn appointment_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
+    row_to_domain_appointment(change, columns).map(DomainResource::Appointment)
 }
 
 async fn scan_table(
@@ -198,7 +219,8 @@ fn mysql_value_to_string(value: &Value) -> Option<String> {
         }
         Value::Time(negative, days, hours, minutes, seconds, _micro) => {
             let sign = if *negative { "-" } else { "" };
-            Some(format!("{sign}{days}d{hours:02}:{minutes:02}:{seconds:02}"))
+            let total_hours = days * 24 + u32::from(*hours);
+            Some(format!("{sign}{total_hours:02}:{minutes:02}:{seconds:02}"))
         }
     }
 }
@@ -218,6 +240,14 @@ mod tests {
         assert_eq!(
             mysql_value_to_string(&Value::Date(1990, 3, 5, 0, 0, 0, 0)),
             Some("1990-03-05".to_string())
+        );
+        assert_eq!(
+            mysql_value_to_string(&Value::Time(false, 0, 9, 0, 0, 0)),
+            Some("09:00:00".to_string())
+        );
+        assert_eq!(
+            mysql_value_to_string(&Value::Time(true, 0, 14, 30, 0, 0)),
+            Some("-14:30:00".to_string())
         );
     }
 }

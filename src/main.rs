@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     // `--backfill` snapshot mode. Captures the pre-scan
     // binlog position, persists it as the checkpoint, then batch-sends the
-    // `demographic` and `provider` tables through the sink. Runs to completion
+    // `provider`, `demographic`, and `appointment` tables through the sink. Runs to completion
     // *before* the source task starts, so the source's `resolve_start_position`
     // reads this exact pre-snapshot checkpoint instead of racing its own
     // cold-start `SHOW MASTER STATUS` call.
