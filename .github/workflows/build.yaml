@@ -171,7 +171,9 @@ jobs:
 
           # --- Appointment -------------------------------------------------
           check "blocked time (demographic_no=0) is not an Appointment" \
-            "$(q "Appointment?_summary=count" | jq -r '.total')" 8
+            "$(q "Appointment?_count=100" | jq -r '[.entry[].resource | select(.comment == "Blocked - lunch")] | length')" 0
+          check "expected Appointment total" \
+            "$(q "Appointment?_summary=count" | jq -r '.total')" 9
 
           exit $fail
 
