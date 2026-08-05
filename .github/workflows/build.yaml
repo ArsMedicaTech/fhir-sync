@@ -99,6 +99,10 @@ jobs:
           done
           docker compose -f docker-compose.demo.yml exec -T mariadb \
             mysql -uoscar -poscarpw oscar < demo/insert_patient.sql
+      
+      - name: Dump container logs
+        if: failure()
+        run: docker compose -f docker-compose.demo.yml logs --no-color
 
       - name: Assert the patient reached HAPI
         run: |
