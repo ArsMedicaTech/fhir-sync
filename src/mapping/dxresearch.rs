@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use mysql_async::prelude::*;
 use tracing::{info, warn};
 
-use crate::config::DatabaseConfig;
+use crate::config::{DatabaseConfig, OscarConfig};
 use crate::domain::condition::DomainCondition;
 use crate::sources::RowChange;
 
@@ -15,7 +15,7 @@ static DIAGNOSTIC_CODES: OnceLock<HashMap<String, String>> = OnceLock::new();
 
 /// Loads `diagnosticcode` descriptions into a startup cache and initialises the
 /// lookup table used by `row_to_domain_condition` (D7).
-pub async fn load_diagnostic_codes(db: &DatabaseConfig) -> Result<()> {
+pub async fn load_diagnostic_codes(db: &DatabaseConfig, oscar: &OscarConfig) -> Result<()> {
     let url = format!(
         "mysql://{}:{}@{}:{}/{}",
         db.user, db.password, db.host, db.port, db.schema

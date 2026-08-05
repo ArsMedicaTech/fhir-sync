@@ -45,6 +45,7 @@ impl Default for OscarConfig {
     fn default() -> Self {
         Self {
             timezone: None,
+            region: None,
             appointment_status_map: default_appointment_status_map(),
         }
     }

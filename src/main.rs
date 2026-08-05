@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cfg.oscar_enabled {
-        mapping::dxresearch::load_diagnostic_codes(&cfg.database).await?;
+        mapping::dxresearch::load_diagnostic_codes(&cfg.database, &cfg.oscar).await?;
     }
 
     let metrics = metrics::Metrics::new();
