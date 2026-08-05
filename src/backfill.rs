@@ -23,7 +23,7 @@ use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
 use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
-use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
+use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
 use crate::mapping::dxresearch::row_to_domain_condition;
 use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
@@ -39,8 +39,8 @@ type Mapper = fn(&RowChange, &ColumnMap) -> Vec<DomainResource>;
 const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
     ("provider", "provider_no", practitioner_mapper),
     ("demographic", "demographic_no", patient_mapper),
-    ("appointment", "appointment_no", appointment_mapper),
     ("demographic_merged", "id", merged_patient_mapper),
+    ("appointment", "appointment_no", appointment_mapper),
     ("dxresearch", "dxresearch_no", dxresearch_mapper),
     ("casemgmt_note", "note_id", casemgmt_note_mapper),
 ];
@@ -106,6 +106,10 @@ fn patient_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource
 
 fn practitioner_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
     row_to_domain_practitioner(change, columns).into_iter().map(DomainResource::Practitioner).collect()
+}
+
+fn merged_patient_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+    row_to_merged_patient(change, columns).into_iter().map(DomainResource::Patient).collect()
 }
 
 fn appointment_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
@@ -230,7 +234,7 @@ mod tests {
     #[test]
     fn backfill_steps_are_in_dependency_order() {
         let names: Vec<_> = BACKFILL_STEPS.iter().map(|(t, _, _)| *t).collect();
-        assert_eq!(names, vec!["provider", "demographic", "appointment", "dxresearch", "casemgmt_note"]);
+        assert_eq!(names, vec!["provider", "demographic", "demographic_merged", "appointment", "dxresearch", "casemgmt_note"]);
     }
 
     #[test]
