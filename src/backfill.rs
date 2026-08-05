@@ -22,7 +22,9 @@ use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
+use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
 use crate::mapping::demographic::{row_to_domain_patient, ColumnMap};
+use crate::mapping::dxresearch::row_to_domain_condition;
 use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
 use crate::sources::mariadb_binlog::{self, resolve_column_map_for_table};
@@ -31,13 +33,15 @@ use crate::sources::{RowChange, RowOp, SourcePosition};
 const BATCH_SIZE: u64 = 500;
 
 /// Dependency order for the multi-resource backfill. Resources with outgoing
-/// conditional references (appointment) are scanned last so their targets have
-/// already been sent to the sink.
-type Mapper = fn(&RowChange, &ColumnMap) -> Option<DomainResource>;
+/// conditional references (appointment, encounter, document reference) are
+/// scanned last so their targets have already been sent to the sink.
+type Mapper = fn(&RowChange, &ColumnMap) -> Vec<DomainResource>;
 const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
     ("provider", "provider_no", practitioner_mapper),
     ("demographic", "demographic_no", patient_mapper),
     ("appointment", "appointment_no", appointment_mapper),
+    ("dxresearch", "dxresearch_no", dxresearch_mapper),
+    ("casemgmt_note", "note_id", casemgmt_note_mapper),
 ];
 
 /// Runs one dependency-ordered backfill pass, sending every row through `tx`
@@ -95,16 +99,25 @@ pub async fn run(
     Ok(total)
 }
 
-fn patient_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
-    row_to_domain_patient(change, columns).map(DomainResource::Patient)
+fn patient_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+    row_to_domain_patient(change, columns).into_iter().map(DomainResource::Patient).collect()
 }
 
-fn practitioner_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
-    row_to_domain_practitioner(change, columns).map(DomainResource::Practitioner)
+fn practitioner_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+    row_to_domain_practitioner(change, columns).into_iter().map(DomainResource::Practitioner).collect()
 }
 
-fn appointment_mapper(change: &RowChange, columns: &ColumnMap) -> Option<DomainResource> {
-    row_to_domain_appointment(change, columns).map(DomainResource::Appointment)
+fn appointment_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+    row_to_domain_appointment(change, columns).into_iter().map(DomainResource::Appointment).collect()
+}
+
+fn dxresearch_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+    row_to_domain_condition(change, columns).into_iter().map(DomainResource::Condition).collect()
+}
+
+fn casemgmt_note_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+    // TODO: load and join billing.visittype per note for Encounter.class (D3/E8).
+    row_to_casemgmt_note_resources(change, columns, None)
 }
 
 async fn scan_table(
@@ -115,7 +128,7 @@ async fn scan_table(
     columns: &ColumnMap,
     tx: &Sender<SyncEvent>,
     metrics: &SharedMetrics,
-    mapper: fn(&RowChange, &ColumnMap) -> Option<DomainResource>,
+    mapper: fn(&RowChange, &ColumnMap) -> Vec<DomainResource>,
 ) -> Result<usize> {
     let mut offset: u64 = 0;
     let mut total = 0usize;
@@ -153,23 +166,26 @@ async fn scan_table(
                 },
             };
 
-            let Some(resource) = mapper(&change, columns) else {
+            let resources = mapper(&change, columns);
+            if resources.is_empty() {
                 continue;
-            };
-
-            let sync_event = SyncEvent::new(
-                EventSource::OscarBackfill { table: table.to_string() },
-                Op::Upsert,
-                resource,
-                chrono::Utc::now(),
-            );
-
-            metrics.inc_received();
-            if tx.send(sync_event).await.is_err() {
-                warn!("backfill: sink channel closed mid-scan, stopping early");
-                return Ok(total);
             }
-            total += 1;
+
+            for resource in resources {
+                let sync_event = SyncEvent::new(
+                    EventSource::OscarBackfill { table: table.to_string() },
+                    Op::Upsert,
+                    resource,
+                    chrono::Utc::now(),
+                );
+
+                metrics.inc_received();
+                if tx.send(sync_event).await.is_err() {
+                    warn!("backfill: sink channel closed mid-scan, stopping early");
+                    return Ok(total);
+                }
+                total += 1;
+            }
         }
 
         offset += batch_len;
@@ -213,7 +229,7 @@ mod tests {
     #[test]
     fn backfill_steps_are_in_dependency_order() {
         let names: Vec<_> = BACKFILL_STEPS.iter().map(|(t, _, _)| *t).collect();
-        assert_eq!(names, vec!["provider", "demographic", "appointment"]);
+        assert_eq!(names, vec!["provider", "demographic", "appointment", "dxresearch", "casemgmt_note"]);
     }
 
     #[test]

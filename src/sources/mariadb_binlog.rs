@@ -29,7 +29,9 @@ use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
+use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
+use crate::mapping::dxresearch::row_to_domain_condition;
 use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
 use crate::sources::{RowChange, RowOp, SourcePosition, TableRef};
@@ -38,6 +40,8 @@ const DEMOGRAPHIC_TABLE: &str = "demographic";
 const DEMOGRAPHIC_MERGED_TABLE: &str = "demographic_merged";
 const PROVIDER_TABLE: &str = "provider";
 const APPOINTMENT_TABLE: &str = "appointment";
+const CASEMGMT_NOTE_TABLE: &str = "casemgmt_note";
+const DXRESEARCH_TABLE: &str = "dxresearch";
 const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
 const READ_ERROR_BACKOFF_MS: u64 = 100;
 
@@ -66,6 +70,14 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
     column_maps.insert(
         APPOINTMENT_TABLE.to_string(),
         resolve_column_map_for_table(&db, APPOINTMENT_TABLE).await?,
+    );
+    column_maps.insert(
+        CASEMGMT_NOTE_TABLE.to_string(),
+        resolve_column_map_for_table(&db, CASEMGMT_NOTE_TABLE).await?,
+    );
+    column_maps.insert(
+        DXRESEARCH_TABLE.to_string(),
+        resolve_column_map_for_table(&db, DXRESEARCH_TABLE).await?,
     );
 
     let (mut current_filename, start_position) = resolve_start_position(&cfg).await?;
@@ -306,27 +318,34 @@ async fn emit_row(
         },
     };
 
-    let resource = match table {
-        DEMOGRAPHIC_TABLE => row_to_domain_patient(&change, columns).map(DomainResource::Patient),
-        DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns).map(DomainResource::Patient),
-        PROVIDER_TABLE => row_to_domain_practitioner(&change, columns).map(DomainResource::Practitioner),
-        APPOINTMENT_TABLE => row_to_domain_appointment(&change, columns).map(DomainResource::Appointment),
+    let resources: Vec<DomainResource> = match table {
+        DEMOGRAPHIC_TABLE => row_to_domain_patient(&change, columns).into_iter().map(DomainResource::Patient).collect(),
+        DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns).into_iter().map(DomainResource::Patient).collect(),
+        PROVIDER_TABLE => row_to_domain_practitioner(&change, columns).into_iter().map(DomainResource::Practitioner).collect(),
+        APPOINTMENT_TABLE => row_to_domain_appointment(&change, columns).into_iter().map(DomainResource::Appointment).collect(),
+        CASEMGMT_NOTE_TABLE => row_to_casemgmt_note_resources(&change, columns, None),
+        DXRESEARCH_TABLE => row_to_domain_condition(&change, columns).into_iter().map(DomainResource::Condition).collect(),
         _ => return true,
     };
 
-    let Some(resource) = resource else {
+    if resources.is_empty() {
         return true;
-    };
+    }
 
-    let sync_event = SyncEvent::new(
-        EventSource::OscarBinlog { table: table.to_string() },
-        sync_op,
-        resource,
-        chrono::Utc::now(),
-    );
+    for resource in resources {
+        let sync_event = SyncEvent::new(
+            EventSource::OscarBinlog { table: table.to_string() },
+            sync_op,
+            resource,
+            chrono::Utc::now(),
+        );
 
-    metrics.inc_received();
-    tx.send(sync_event).await.is_ok()
+        metrics.inc_received();
+        if tx.send(sync_event).await.is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str) -> Option<String> {
@@ -335,7 +354,9 @@ fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str)
             && (t.table == DEMOGRAPHIC_TABLE
                 || t.table == DEMOGRAPHIC_MERGED_TABLE
                 || t.table == PROVIDER_TABLE
-                || t.table == APPOINTMENT_TABLE)
+                || t.table == APPOINTMENT_TABLE
+                || t.table == CASEMGMT_NOTE_TABLE
+                || t.table == DXRESEARCH_TABLE)
         {
             Some(t.table.clone())
         } else {

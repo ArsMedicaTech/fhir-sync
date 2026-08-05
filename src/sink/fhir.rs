@@ -11,9 +11,15 @@ use std::io::Write;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use fhirbolt::model::r4b::resources::{Appointment, AppointmentParticipant, Bundle, BundleEntry, BundleEntryRequest, Patient, PatientDeceased, PatientLink, Practitioner};
+use fhirbolt::model::r4b::resources::{
+    Appointment, AppointmentParticipant, Bundle, BundleEntry, BundleEntryRequest, Patient,
+    PatientDeceased, PatientLink, Practitioner,
+};
 use fhirbolt::model::r4b::Resource as FhirResource;
-use fhirbolt::model::r4b::types::{Address, CodeableConcept, ContactPoint, Extension, ExtensionValue, HumanName, Identifier, Meta, Reference};
+use fhirbolt::model::r4b::types::{
+    Address, CodeableConcept, ContactPoint, Extension, ExtensionValue, HumanName, Identifier, Meta,
+    Reference,
+};
 use chrono::{LocalResult, NaiveDate, NaiveTime, TimeZone};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
@@ -26,6 +32,8 @@ use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatie
 use crate::domain::practitioner::DomainPractitioner;
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, ResourceType, Source, SyncEvent};
+
+mod oscar2;
 use crate::metrics::SharedMetrics;
 
 const META_SOURCE: &str = "urn:arsmedicatech:fhir-sync:oscar";
@@ -193,12 +201,23 @@ fn build_put_request(
     let resource_path = event.resource_type().as_path();
     let base = format!("{}/{resource_path}", fhir_cfg.base_url.trim_end_matches('/'));
 
-    let identifier_system = match event.resource_type() {
-        ResourceType::Patient => &fhir_cfg.oscar_demographic_system,
-        ResourceType::Practitioner => &fhir_cfg.oscar_provider_system,
-        ResourceType::Appointment => &fhir_cfg.oscar_appointment_system,
+    let (identifier_system, source_id) = match event.payload() {
+        DomainResource::Patient(p) => (&fhir_cfg.oscar_demographic_system, p.demographic_no.as_str()),
+        DomainResource::Practitioner(p) => (&fhir_cfg.oscar_provider_system, p.provider_no.as_str()),
+        DomainResource::Appointment(a) => (&fhir_cfg.oscar_appointment_system, a.appointment_no.as_str()),
+        DomainResource::Encounter(e) => (&fhir_cfg.oscar_note_system, e.uuid.as_deref().unwrap_or(&e.note_id)),
+        DomainResource::DocumentReference(d) => (&fhir_cfg.oscar_note_document_system, d.uuid.as_deref().unwrap_or(&d.note_id)),
+        DomainResource::Condition(c) => {
+            let sys = if c.source_table == "dxresearch" {
+                &fhir_cfg.oscar_dxresearch_system
+            } else {
+                &fhir_cfg.oscar_cpp_condition_system
+            };
+            (sys, c.source_id.as_str())
+        }
+        DomainResource::FamilyMemberHistory(f) => (&fhir_cfg.oscar_cpp_condition_system, f.note_id.as_str()),
     };
-    let identifier = format!("{}|{}", identifier_system, event.payload().source_id());
+    let identifier = format!("{}|{}", identifier_system, source_id);
 
     let mut req = client
         .put(&base)
@@ -236,6 +255,18 @@ async fn sync_one(
         }
         DomainResource::Appointment(appointment) => {
             sync_appointment(client, fhir_cfg, token, event, appointment, &cfg.oscar).await
+        }
+        DomainResource::Encounter(encounter) => {
+            oscar2::sync_encounter(client, fhir_cfg, token, event, encounter, &cfg.oscar).await
+        }
+        DomainResource::DocumentReference(doc) => {
+            oscar2::sync_document_reference(client, fhir_cfg, token, event, doc, &cfg.oscar).await
+        }
+        DomainResource::Condition(condition) => {
+            oscar2::sync_condition(client, fhir_cfg, token, event, condition).await
+        }
+        DomainResource::FamilyMemberHistory(fh) => {
+            oscar2::sync_family_member_history(client, fhir_cfg, token, event, fh).await
         }
     }
 }

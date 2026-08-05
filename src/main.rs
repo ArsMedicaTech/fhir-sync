@@ -34,7 +34,11 @@ async fn main() -> anyhow::Result<()> {
     if cfg.oscar_enabled && cfg.database.host.is_empty() {
         anyhow::bail!("oscar_enabled = true but [database] is missing or has no host");
     }
-    
+
+    if cfg.oscar_enabled {
+        mapping::dxresearch::load_diagnostic_codes(&cfg.database).await?;
+    }
+
     let metrics = metrics::Metrics::new();
     metrics::spawn_reporter(metrics.clone());
 
