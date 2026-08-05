@@ -39,13 +39,6 @@ pub async fn load_diagnostic_codes(db: &DatabaseConfig, oscar: &OscarConfig) -> 
     drop(conn);
     let _ = pool.disconnect().await;
 
-    let mut map = HashMap::with_capacity(rows.len());
-    for (code, description) in rows {
-        map.insert(code, description);
-    }
-
-    info!("loaded {} diagnosticcode rows", map.len());
-
     let want_region = oscar.region.as_deref();
     let mut map: HashMap<String, String> = HashMap::with_capacity(rows.len());
     let mut collisions = 0usize;
