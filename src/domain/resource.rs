@@ -1,4 +1,5 @@
 use crate::domain::appointment::DomainAppointment;
+use crate::domain::care_team::DomainCareTeam;
 use crate::domain::condition::{DomainCondition, DomainFamilyMemberHistory};
 use crate::domain::document_reference::DomainDocumentReference;
 use crate::domain::encounter::DomainEncounter;
@@ -16,6 +17,7 @@ pub enum DomainResource {
     DocumentReference(DomainDocumentReference),
     Condition(DomainCondition),
     FamilyMemberHistory(DomainFamilyMemberHistory),
+    CareTeam(DomainCareTeam),
 }
 
 impl DomainResource {
@@ -29,6 +31,7 @@ impl DomainResource {
             DomainResource::DocumentReference(_) => ResourceType::DocumentReference,
             DomainResource::Condition(_) => ResourceType::Condition,
             DomainResource::FamilyMemberHistory(_) => ResourceType::FamilyMemberHistory,
+            DomainResource::CareTeam(_) => ResourceType::CareTeam,
         }
     }
 
@@ -43,6 +46,7 @@ impl DomainResource {
             DomainResource::DocumentReference(d) => d.uuid.as_deref().unwrap_or(&d.note_id),
             DomainResource::Condition(c) => &c.source_id,
             DomainResource::FamilyMemberHistory(f) => &f.note_id,
+            DomainResource::CareTeam(c) => &c.demographic_no,
         }
     }
 
@@ -59,6 +63,7 @@ impl DomainResource {
                 _ => "casemgmt_note",
             },
             DomainResource::FamilyMemberHistory(_) => "casemgmt_note",
+            DomainResource::CareTeam(_) => "demographic",
         }
     }
 }
