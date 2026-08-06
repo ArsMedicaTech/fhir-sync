@@ -7,7 +7,7 @@ use crate::sources::RowChange;
 /// `information_schema.columns` at startup (D3). Never hardcode indexes.
 pub type ColumnMap = HashMap<String, usize>;
 
-fn lookup<'a>(change: &'a RowChange, columns: &ColumnMap, name: &str) -> Option<&'a str> {
+pub(crate) fn lookup<'a>(change: &'a RowChange, columns: &ColumnMap, name: &str) -> Option<&'a str> {
     let idx = *columns.get(name)?;
     change
         .after
