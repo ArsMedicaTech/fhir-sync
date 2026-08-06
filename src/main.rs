@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         let total = backfill::run(&cfg, &tx, &metrics).await?;
         info!("backfill: sent {total} resources");
         drop(tx);
-        let _ = sink_task.await;
+        handle_exit("sink", sink_task.await);
         return Ok(());
     }
 
