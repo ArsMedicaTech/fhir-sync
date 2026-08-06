@@ -811,14 +811,32 @@ async fn find_existing_care_team(
     }
 
     let body_text = resp.text().await.unwrap_or_default();
-    let bundle: Bundle = fhirbolt::json::from_str(&body_text, None)
-        .with_context(|| "parsing CareTeam search Bundle")
+    // NOTE: this is a *search*-result Bundle (entry.search.mode = "match"/etc.),
+    // not a transaction-response Bundle (entry.response = ...) like the other
+    // fhirbolt::json::from_str::<Bundle> call sites. fhirbolt's Bundle model fails
+    // on entry.search.mode as a bare FHIR `code` string, so walk the envelope as
+    // plain JSON and hand fhirbolt only the `resource` object, which has no `search`
+    // field to trip on.
+    let raw: serde_json::Value = serde_json::from_str(&body_text)
+        .with_context(|| "parsing CareTeam search Bundle as JSON")
         .map_err(SyncFailure::Retryable)?;
+    let raw_entries = raw
+        .get("entry")
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default();
 
-    for entry in &bundle.entry {
-        let Some(FhirResource::CareTeam(ct)) = entry.resource.as_ref() else {
+    for raw_entry in &raw_entries {
+        let Some(resource_json) = raw_entry.get("resource") else {
             continue;
         };
+        if resource_json.get("resourceType").and_then(|v| v.as_str()) != Some("CareTeam") {
+            continue;
+        }
+        let ct: CareTeam = fhirbolt::json::from_str(&resource_json.to_string(), None)
+            .with_context(|| "parsing CareTeam resource from search entry")
+            .map_err(SyncFailure::Retryable)?;
+
         let Some(id) = ct.id.as_ref().and_then(|i| i.value.clone()) else {
             continue;
         };
@@ -846,7 +864,7 @@ async fn find_existing_care_team(
             .map(|s| s.starts_with(META_SOURCE))
             .unwrap_or(false);
         if has_oscar_identifier && has_sync_source {
-            return Ok(Some((id, version_id, *ct.clone())));
+            return Ok(Some((id, version_id, ct)));
         }
     }
 
