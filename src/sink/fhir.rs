@@ -7,6 +7,7 @@
 //! event is appended to `cfg.sync.dead_letter_path` and the stream keeps
 //! running — one bad record must never take down the process.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::time::Duration;
 
@@ -596,15 +597,26 @@ async fn sync_care_team(
         };
 
     // Existing CareTeam: ensure the current MRP is present (D2).
+    // We resolve the Oscar identifier to the set of matching Practitioner IDs, because HAPI may
+    // store the participant as a literal `Practitioner/<id>` after resolving the conditional
+    // reference. Without this, an exact-string compare would re-append the same MRP every sync.
     let prov_sys: String =
         url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
     let prov_val: String =
         url::form_urlencoded::byte_serialize(care_team.provider_no.as_bytes()).collect();
     let expected_member = format!("Practitioner?identifier={prov_sys}|{prov_val}");
+    let practitioner_ids = resolve_practitioner_ids(
+        client,
+        token.as_deref(),
+        base,
+        &fhir_cfg.oscar_provider_system,
+        &care_team.provider_no,
+    )
+    .await?;
     let already_present = initial_resource
         .participant
         .iter()
-        .any(|p| participant_has_member(p, &expected_member));
+        .any(|p| participant_has_member(p, &expected_member, &practitioner_ids));
 
     if already_present {
         info!(
@@ -677,10 +689,18 @@ async fn sync_care_team(
                 current_version = version;
                 current_resource = resource;
                 // If the winner already has the MRP, this is now a no-op.
+                let practitioner_ids = resolve_practitioner_ids(
+                    client,
+                    token.as_deref(),
+                    base,
+                    &fhir_cfg.oscar_provider_system,
+                    &care_team.provider_no,
+                )
+                .await?;
                 if current_resource
                     .participant
                     .iter()
-                    .any(|p| participant_has_member(p, &expected_member))
+                    .any(|p| participant_has_member(p, &expected_member, &practitioner_ids))
                 {
                     return Ok(FhirResult {
                         fhir_id: current_id,
@@ -871,13 +891,95 @@ async fn find_existing_care_team(
     Ok(None)
 }
 
-fn participant_has_member(participant: &CareTeamParticipant, expected: &str) -> bool {
-    participant
+/// Searches HAPI for Practitioners carrying the given Oscar identifier and returns their
+/// literal resource IDs. This is used for identity-aware participant matching: HAPI may store
+/// the participant reference as `Practitioner/<id>` after resolving the conditional reference
+/// server-side, so an exact string compare against `Practitioner?identifier=...` would miss it.
+/// Parsed as plain JSON because search-result Bundles carry `entry.search.mode`, which fhirbolt's
+/// Bundle model fails on (see `find_existing_care_team`).
+async fn resolve_practitioner_ids(
+    client: &reqwest::Client,
+    token: Option<&str>,
+    base: &str,
+    system: &str,
+    value: &str,
+) -> Result<HashSet<String>, SyncFailure> {
+    let identifier = format!("{}|{}", system, value);
+    let mut req = client
+        .get(format!("{}/Practitioner", base))
+        .query(&[("identifier", identifier.as_str())])
+        .header("Accept", "application/fhir+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| "searching Practitioner by Oscar identifier")
+        .map_err(SyncFailure::Retryable)?;
+    let status = resp.status();
+
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(classify_http_error(status, &text, "Practitioner identity search"));
+    }
+
+    let body_text = resp.text().await.unwrap_or_default();
+    let raw: serde_json::Value = serde_json::from_str(&body_text)
+        .with_context(|| "parsing Practitioner search Bundle as JSON")
+        .map_err(SyncFailure::Retryable)?;
+    let raw_entries = raw
+        .get("entry")
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut ids = HashSet::new();
+    for raw_entry in raw_entries {
+        let Some(resource_json) = raw_entry.get("resource") else {
+            continue;
+        };
+        if resource_json.get("resourceType").and_then(|v| v.as_str()) != Some("Practitioner") {
+            continue;
+        }
+        if let Some(id) = resource_json.get("id").and_then(|v| v.as_str()) {
+            ids.insert(id.to_string());
+        }
+    }
+
+    Ok(ids)
+}
+
+fn participant_has_member(
+    participant: &CareTeamParticipant,
+    expected_conditional: &str,
+    practitioner_ids: &HashSet<String>,
+) -> bool {
+    let Some(reference) = participant
         .member
         .as_ref()
         .and_then(|m| m.reference.as_ref())
         .and_then(|r| r.value.as_deref())
-        == Some(expected)
+    else {
+        return false;
+    };
+
+    if reference == expected_conditional {
+        return true;
+    }
+
+    // HAPI may rewrite a conditional reference to a literal reference after resolving
+    // it server-side. Accept literal references whose target Practitioner carries the
+    // expected Oscar identifier.
+    if let Some(id) = reference.rsplit_once("/Practitioner/").map(|(_, id)| id) {
+        return practitioner_ids.contains(id);
+    }
+    if let Some(id) = reference.strip_prefix("Practitioner/") {
+        return practitioner_ids.contains(id);
+    }
+
+    false
 }
 
 fn classify_http_error(status: reqwest::StatusCode, text: &str, context: &str) -> SyncFailure {
