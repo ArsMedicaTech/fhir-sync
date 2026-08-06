@@ -14,14 +14,17 @@ grpc_port = 50051
 [fhir]
 base_url = "http://localhost:8082/fhir"
 oscar_demographic_system = "https://arsmedicatech.com/fhir/sid/oscar-demographic"
-oscar_provider_system = "https://arsmedicatech.com/fhir/sid/oscar-provider"
+oscar_provider_system    = "https://arsmedicatech.com/fhir/sid/oscar-provider"
 oscar_appointment_system = "https://arsmedicatech.com/fhir/sid/oscar-appointment"
+oscar_care_team_system = "https://arsmedicatech.com/fhir/sid/oscar-care-team"
 bc_phn_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id"
 bc_msp_practitioner_system = "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"
 # token_env = "FHIR_SYNC_TOKEN"
 
 [oscar]
 timezone = "America/Vancouver"
+care_team_enabled = true
+# default_mrp_provider_no = "999998"  # fallback MRP for patients without one
 
 # Optional status overrides for site-configurable `appointment.status` codes.
 # Leave a code unmapped to dead-letter it rather than guess.
