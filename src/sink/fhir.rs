@@ -12,13 +12,13 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use fhirbolt::model::r4b::resources::{
-    Appointment, AppointmentParticipant, Bundle, BundleEntry, BundleEntryRequest, Patient,
-    PatientDeceased, PatientLink, Practitioner,
+    Appointment, AppointmentParticipant, Bundle, BundleEntry, BundleEntryRequest, CareTeam,
+    CareTeamParticipant, Patient, PatientDeceased, PatientLink, Practitioner,
 };
 use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
-    Address, CodeableConcept, ContactPoint, Extension, ExtensionValue, HumanName, Identifier, Meta,
-    Reference,
+    Address, CodeableConcept, Coding, ContactPoint, Extension, ExtensionValue, HumanName,
+    Identifier, Meta, Reference,
 };
 use chrono::{LocalResult, NaiveDate, NaiveTime, TimeZone};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -28,6 +28,7 @@ use crate::auth::TokenProvider;
 use crate::config::{Config, FhirConfig, OscarConfig};
 use crate::dispatch::DispatchNotification;
 use crate::domain::appointment::DomainAppointment;
+use crate::domain::care_team::DomainCareTeam;
 use crate::domain::patient::{AddressKind, AddressUse, DomainAddress, DomainPatient};
 use crate::domain::practitioner::DomainPractitioner;
 use crate::domain::resource::DomainResource;
@@ -224,6 +225,7 @@ fn build_put_request(
             (sys, c.source_id.as_str())
         }
         DomainResource::FamilyMemberHistory(f) => (&fhir_cfg.oscar_cpp_condition_system, f.note_id.as_str()),
+        DomainResource::CareTeam(c) => (&fhir_cfg.oscar_care_team_system, c.demographic_no.as_str()),
     };
     let identifier = format!("{}|{}", identifier_system, source_id);
 
@@ -275,6 +277,9 @@ async fn sync_one(
         }
         DomainResource::FamilyMemberHistory(fh) => {
             oscar2::sync_family_member_history(client, fhir_cfg, token, event, fh).await
+        }
+        DomainResource::CareTeam(care_team) => {
+            sync_care_team(client, fhir_cfg, token, event, care_team).await
         }
     }
 }
@@ -523,6 +528,415 @@ async fn sync_appointment(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
         event.idempotency_key(), identifier, result.fhir_id, result.version_id
     );
+    Ok(result)
+}
+
+async fn sync_care_team(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    care_team: &DomainCareTeam,
+) -> Result<FhirResult, SyncFailure> {
+    // Deletions on the demographic row do not alter CareTeam membership:
+    // removal is a human decision in AMT-Social (D2).
+    if event.op() == Op::Delete {
+        return Ok(FhirResult {
+            fhir_id: String::new(),
+            version_id: None,
+        });
+    }
+
+    let base = fhir_cfg.base_url.trim_end_matches('/');
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_care_team_system, care_team.demographic_no
+    );
+
+    let (initial_id, initial_version, initial_resource) =
+        match find_existing_care_team(client, fhir_cfg, token.as_deref(), base, &identifier).await? {
+            Some(found) => found,
+            None => {
+                let fhir_ct = build_care_team(care_team, fhir_cfg);
+                let bundle = build_care_team_create_bundle(&fhir_ct, fhir_cfg, event);
+                let body = fhirbolt::json::to_string(&bundle, None)
+                    .context("serializing CareTeam transaction Bundle")
+                    .map_err(SyncFailure::Permanent)?;
+
+                let mut req = client
+                    .post(base)
+                    .header("Content-Type", "application/fhir+json")
+                    .body(body);
+                if let Some(t) = token.as_deref() {
+                    req = req.bearer_auth(t);
+                }
+
+                let resp = req
+                    .send()
+                    .await
+                    .with_context(|| "sending CareTeam transaction Bundle")
+                    .map_err(SyncFailure::Retryable)?;
+                let status = resp.status();
+
+                if !status.is_success() {
+                    let text = resp.text().await.unwrap_or_default();
+                    return Err(classify_http_error(status, &text, "CareTeam create Bundle"));
+                }
+
+                let body_text = resp.text().await.unwrap_or_default();
+                let result = parse_bundle_response(&body_text)?;
+                info!(
+                    "fhir sink: synced {} -> CareTeam {} (version_id={:?})",
+                    event.idempotency_key(),
+                    result.fhir_id,
+                    result.version_id
+                );
+                return Ok(result);
+            }
+        };
+
+    // Existing CareTeam: ensure the current MRP is present (D2).
+    let prov_sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
+    let prov_val: String =
+        url::form_urlencoded::byte_serialize(care_team.provider_no.as_bytes()).collect();
+    let expected_member = format!("Practitioner?identifier={prov_sys}|{prov_val}");
+    let already_present = initial_resource
+        .participant
+        .iter()
+        .any(|p| participant_has_member(p, &expected_member));
+
+    if already_present {
+        info!(
+            "fhir sink: {} CareTeam {} already contains MRP {}; no-op",
+            event.idempotency_key(),
+            initial_id,
+            care_team.provider_no
+        );
+        return Ok(FhirResult {
+            fhir_id: initial_id,
+            version_id: Some(initial_version),
+        });
+    }
+
+    // Append the MRP and PUT with If-Match. On 409/412, re-read once and retry.
+    let mut current_id = initial_id;
+    let mut current_version = initial_version;
+    let mut current_resource = initial_resource;
+
+    for attempt in 0..2 {
+        current_resource
+            .participant
+            .push(build_care_team_participant(care_team, fhir_cfg));
+
+        let body = fhirbolt::json::to_string(&current_resource, None)
+            .context("serializing updated CareTeam")
+            .map_err(SyncFailure::Permanent)?;
+
+        let url = format!("{}/CareTeam/{}", base, current_id);
+        let mut req = client
+            .put(&url)
+            .header("Content-Type", "application/fhir+json")
+            .header("If-Match", format!("W/\"{}\"", current_version))
+            .body(body);
+        if let Some(t) = token.as_deref() {
+            req = req.bearer_auth(t);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("PUT CareTeam/{}", current_id))
+            .map_err(SyncFailure::Retryable)?;
+        let status = resp.status();
+
+        if status.is_success() {
+            let body_text = resp.text().await.unwrap_or_default();
+            let result = parse_care_team_put_response(&body_text, &current_id)?;
+            info!(
+                "fhir sink: synced {} -> CareTeam {} appended MRP {} (version_id={:?})",
+                event.idempotency_key(),
+                result.fhir_id,
+                care_team.provider_no,
+                result.version_id
+            );
+            return Ok(result);
+        }
+
+        let text = resp.text().await.unwrap_or_default();
+        let code = status.as_u16();
+        if attempt == 0 && (code == 409 || code == 412) {
+            warn!(
+                "fhir sink: CareTeam/{current_id} conflict on attempt {attempt}; re-reading and retrying"
+            );
+            if let Some((id, version, resource)) =
+                find_existing_care_team(client, fhir_cfg, token.as_deref(), base, &identifier)
+                    .await?
+            {
+                current_id = id;
+                current_version = version;
+                current_resource = resource;
+                // If the winner already has the MRP, this is now a no-op.
+                if current_resource
+                    .participant
+                    .iter()
+                    .any(|p| participant_has_member(p, &expected_member))
+                {
+                    return Ok(FhirResult {
+                        fhir_id: current_id,
+                        version_id: Some(current_version),
+                    });
+                }
+                continue;
+            }
+        }
+        return Err(classify_http_error(status, &text, "CareTeam update"));
+    }
+
+    Err(SyncFailure::Retryable(anyhow::anyhow!(
+        "CareTeam/{current_id} update conflict persisted after retry"
+    )))
+}
+
+fn build_care_team_participant(care_team: &DomainCareTeam, fhir_cfg: &FhirConfig) -> CareTeamParticipant {
+    let sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
+    let val: String =
+        url::form_urlencoded::byte_serialize(care_team.provider_no.as_bytes()).collect();
+
+    CareTeamParticipant {
+        role: vec![CodeableConcept {
+            coding: vec![Coding {
+                system: Some("http://snomed.info/sct".to_string().into()),
+                code: Some("446050000".to_string().into()),
+                display: Some("Primary care physician".to_string().into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        member: Some(Box::new(Reference {
+            reference: Some(format!("Practitioner?identifier={sys}|{val}").into()),
+            ..Default::default()
+        })),
+        ..Default::default()
+    }
+}
+
+fn build_care_team(care_team: &DomainCareTeam, fhir_cfg: &FhirConfig) -> CareTeam {
+    let demo_sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes()).collect();
+    let demo_val: String =
+        url::form_urlencoded::byte_serialize(care_team.demographic_no.as_bytes()).collect();
+
+    CareTeam {
+        meta: Some(Box::new(Meta {
+            source: Some(META_SOURCE.into()),
+            ..Default::default()
+        })),
+        identifier: vec![Identifier {
+            system: Some(fhir_cfg.oscar_care_team_system.clone().into()),
+            value: Some(care_team.demographic_no.clone().into()),
+            ..Default::default()
+        }],
+        status: Some("active".into()),
+        category: vec![CodeableConcept {
+            coding: vec![Coding {
+                system: Some("http://loinc.org".to_string().into()),
+                code: Some("LA28865-6".to_string().into()),
+                display: Some("Longitudinal care-coordination focused care team".to_string().into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        subject: Some(Box::new(Reference {
+            reference: Some(format!("Patient?identifier={demo_sys}|{demo_val}").into()),
+            ..Default::default()
+        })),
+        participant: vec![build_care_team_participant(care_team, fhir_cfg)],
+        ..Default::default()
+    }
+}
+
+fn build_care_team_create_bundle(
+    fhir_care_team: &CareTeam,
+    fhir_cfg: &FhirConfig,
+    event: &SyncEvent,
+) -> Bundle {
+    let sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_care_team_system.as_bytes()).collect();
+    let val: String =
+        url::form_urlencoded::byte_serialize(event.payload().source_id().as_bytes()).collect();
+    let conditional_url = format!("{}?identifier={sys}|{val}", event.resource_type().as_path());
+
+    let mut bundle = Bundle::default();
+    bundle.r#type = "transaction".into();
+    bundle.entry.push(BundleEntry {
+        full_url: Some(format!("urn:uuid:{}", event.idempotency_key()).into()),
+        resource: Some(FhirResource::CareTeam(Box::new(fhir_care_team.clone()))),
+        request: Some(BundleEntryRequest {
+            method: "PUT".into(),
+            url: conditional_url.into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    bundle
+}
+
+async fn find_existing_care_team(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<&str>,
+    base: &str,
+    identifier: &str,
+) -> Result<Option<(String, String, CareTeam)>, SyncFailure> {
+    let mut req = client
+        .get(format!("{}/CareTeam", base))
+        .query(&[("identifier", identifier)])
+        .header("Accept", "application/fhir+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| "searching CareTeam")
+        .map_err(SyncFailure::Retryable)?;
+    let status = resp.status();
+
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(classify_http_error(status, &text, "CareTeam search"));
+    }
+
+    let body_text = resp.text().await.unwrap_or_default();
+    let bundle: Bundle = fhirbolt::json::from_str(&body_text, None)
+        .with_context(|| "parsing CareTeam search Bundle")
+        .map_err(SyncFailure::Retryable)?;
+
+    for entry in &bundle.entry {
+        let Some(FhirResource::CareTeam(ct)) = entry.resource.as_ref() else {
+            continue;
+        };
+        let Some(id) = ct.id.as_ref().and_then(|i| i.value.clone()) else {
+            continue;
+        };
+        let Some(version_id) = ct
+            .meta
+            .as_ref()
+            .and_then(|m| m.version_id.as_ref())
+            .and_then(|v| v.value.clone())
+        else {
+            continue;
+        };
+        // D5: only touch CareTeams carrying our Oscar identifier and source stamp.
+        let has_oscar_identifier = ct.identifier.iter().any(|i| {
+            i.system
+                .as_ref()
+                .and_then(|s| s.value.as_deref())
+                == Some(fhir_cfg.oscar_care_team_system.as_str())
+                && i.value.as_ref().and_then(|v| v.value.as_deref()).is_some()
+        });
+        let has_sync_source = ct
+            .meta
+            .as_ref()
+            .and_then(|m| m.source.as_ref())
+            .and_then(|s| s.value.as_deref())
+            .map(|s| s.starts_with(META_SOURCE))
+            .unwrap_or(false);
+        if has_oscar_identifier && has_sync_source {
+            return Ok(Some((id, version_id, *ct.clone())));
+        }
+    }
+
+    Ok(None)
+}
+
+fn participant_has_member(participant: &CareTeamParticipant, expected: &str) -> bool {
+    participant
+        .member
+        .as_ref()
+        .and_then(|m| m.reference.as_ref())
+        .and_then(|r| r.value.as_deref())
+        == Some(expected)
+}
+
+fn classify_http_error(status: reqwest::StatusCode, text: &str, context: &str) -> SyncFailure {
+    let err = anyhow::anyhow!("{context} failed ({status}): {text}");
+    if status.is_client_error() && status.as_u16() != 429 {
+        SyncFailure::Permanent(err)
+    } else {
+        SyncFailure::Retryable(err)
+    }
+}
+
+fn parse_bundle_response(body_text: &str) -> Result<FhirResult, SyncFailure> {
+    let mut result = FhirResult {
+        fhir_id: String::new(),
+        version_id: None,
+    };
+
+    if !body_text.trim().is_empty() {
+        if let Ok(response_bundle) = fhirbolt::json::from_str::<Bundle>(body_text, None) {
+            if let Some(entry) = response_bundle.entry.first() {
+                if let Some(response) = &entry.response {
+                    let entry_status = response
+                        .status
+                        .value
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if !entry_status.starts_with('2') {
+                        return Err(SyncFailure::Permanent(anyhow::anyhow!(
+                            "CareTeam transaction Bundle entry failed with status '{entry_status}'"
+                        )));
+                    }
+
+                    if let Some(loc) = response
+                        .location
+                        .as_ref()
+                        .and_then(|l| l.value.as_deref())
+                    {
+                        result.fhir_id = parse_location_id(loc).unwrap_or_default();
+                        result.version_id = parse_location_version_id(loc);
+                    }
+
+                    if result.fhir_id.is_empty() {
+                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref()) {
+                            result.fhir_id = parse_location_id(etag).unwrap_or_default();
+                            result.version_id = parse_location_version_id(etag);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn parse_care_team_put_response(body_text: &str, fallback_id: &str) -> Result<FhirResult, SyncFailure> {
+    let mut result = FhirResult {
+        fhir_id: fallback_id.to_string(),
+        version_id: None,
+    };
+
+    if !body_text.trim().is_empty() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(body_text) {
+            if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                result.fhir_id = id.to_string();
+            }
+            if let Some(vid) = value
+                .get("meta")
+                .and_then(|m| m.get("versionId"))
+                .and_then(|v| v.as_str())
+            {
+                result.version_id = Some(vid.to_string());
+            }
+        }
+    }
+
     Ok(result)
 }
 
@@ -1070,6 +1484,8 @@ mod tests {
             timezone: Some("America/Vancouver".to_string()),
             region: Some("BC".to_string()),
             appointment_status_map: crate::config::OscarConfig::default().appointment_status_map,
+            default_mrp_provider_no: None,
+            care_team_enabled: true,
         }
     }
 
@@ -1627,5 +2043,99 @@ mod tests {
         let (result, attempts) = run_with_http_status("503 Service Unavailable", 3).await;
         assert!(result.is_err());
         assert_eq!(attempts, 3, "expected 3 attempts for 503, got {attempts}");
+    }
+
+    #[test]
+    fn build_care_team_has_required_shape() {
+        let cfg = fhir_cfg();
+        let ct = build_care_team(
+            &DomainCareTeam {
+                demographic_no: "101".to_string(),
+                provider_no: "P-001".to_string(),
+            },
+            &cfg,
+        );
+
+        assert_eq!(ct.identifier.len(), 1);
+        assert_eq!(
+            ct.identifier[0].system.as_ref().and_then(|s| s.value.as_deref()),
+            Some(cfg.oscar_care_team_system.as_str())
+        );
+        assert_eq!(
+            ct.identifier[0].value.as_ref().and_then(|v| v.value.as_deref()),
+            Some("101")
+        );
+        assert_eq!(
+            ct.status.as_ref().and_then(|s| s.value.as_deref()),
+            Some("active")
+        );
+        assert_eq!(ct.category.len(), 1);
+        let coding = ct.category[0].coding.first().unwrap();
+        assert_eq!(
+            coding.system.as_ref().and_then(|s| s.value.as_deref()),
+            Some("http://loinc.org")
+        );
+        assert_eq!(
+            coding.code.as_ref().and_then(|c| c.value.as_deref()),
+            Some("LA28865-6")
+        );
+        let subject_ref = ct
+            .subject
+            .as_ref()
+            .and_then(|s| s.reference.as_ref())
+            .and_then(|r| r.value.as_deref())
+            .unwrap_or("");
+        assert!(subject_ref.starts_with("Patient?identifier="), "subject must be a Patient conditional reference: {subject_ref}");
+        assert!(subject_ref.contains("101"));
+
+        assert_eq!(ct.participant.len(), 1);
+        let member_ref = ct.participant[0]
+            .member
+            .as_ref()
+            .and_then(|m| m.reference.as_ref())
+            .and_then(|r| r.value.as_deref())
+            .unwrap_or("");
+        assert!(member_ref.starts_with("Practitioner?identifier="));
+        assert!(member_ref.contains("P-001"));
+
+        assert_eq!(
+            ct.meta.as_ref()
+                .and_then(|m| m.source.as_ref())
+                .and_then(|s| s.value.as_deref()),
+            Some(META_SOURCE)
+        );
+    }
+
+    #[test]
+    fn care_team_idempotency_key_differs_from_patient_for_same_row() {
+        let now = chrono::Utc::now();
+        let patient_event = SyncEvent::new(
+            Source::OscarBinlog { table: "demographic".to_string() },
+            Op::Upsert,
+            DomainResource::Patient(DomainPatient {
+                demographic_no: "101".to_string(),
+                first_name: None,
+                last_name: None,
+                date_of_birth: None,
+                addresses: Vec::new(),
+                patient_status: None,
+                merged_to: None,
+                sex: None,
+                phone: None,
+                email: None,
+                hin: None,
+            }),
+            now,
+        );
+        let care_team_event = SyncEvent::new(
+            Source::OscarBinlog { table: "demographic".to_string() },
+            Op::Upsert,
+            DomainResource::CareTeam(DomainCareTeam {
+                demographic_no: "101".to_string(),
+                provider_no: "P-001".to_string(),
+            }),
+            now,
+        );
+        assert_ne!(patient_event.idempotency_key(), care_team_event.idempotency_key());
     }
 }

@@ -29,6 +29,7 @@ use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
+use crate::mapping::care_team::row_to_domain_care_team;
 use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
 use crate::mapping::dxresearch::row_to_domain_condition;
@@ -146,6 +147,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                             &db.schema,
                             &table,
                             &column_maps,
+                            &cfg,
                             &tx,
                             &metrics,
                             &row.column_values,
@@ -166,6 +168,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                             &db.schema,
                             &table,
                             &column_maps,
+                            &cfg,
                             &tx,
                             &metrics,
                             &after.column_values,
@@ -187,6 +190,7 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
                             &db.schema,
                             &table,
                             &column_maps,
+                            &cfg,
                             &tx,
                             &metrics,
                             &row.column_values,
@@ -292,6 +296,7 @@ async fn emit_row(
     schema: &str,
     table: &str,
     column_maps: &HashMap<String, ColumnMap>,
+    cfg: &Config,
     tx: &Sender<SyncEvent>,
     metrics: &SharedMetrics,
     values: &[ColumnValue],
@@ -319,7 +324,18 @@ async fn emit_row(
     };
 
     let resources: Vec<DomainResource> = match table {
-        DEMOGRAPHIC_TABLE => row_to_domain_patient(&change, columns).into_iter().map(DomainResource::Patient).collect(),
+        DEMOGRAPHIC_TABLE => {
+            let mut out: Vec<DomainResource> = row_to_domain_patient(&change, columns)
+                .into_iter()
+                .map(DomainResource::Patient)
+                .collect();
+            if cfg.oscar.care_team_enabled {
+                if let Some(ct) = row_to_domain_care_team(&change, columns, &cfg.oscar) {
+                    out.push(DomainResource::CareTeam(ct));
+                }
+            }
+            out
+        }
         DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns).into_iter().map(DomainResource::Patient).collect(),
         PROVIDER_TABLE => row_to_domain_practitioner(&change, columns).into_iter().map(DomainResource::Practitioner).collect(),
         APPOINTMENT_TABLE => row_to_domain_appointment(&change, columns).into_iter().map(DomainResource::Appointment).collect(),

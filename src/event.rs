@@ -60,6 +60,7 @@ pub enum ResourceType {
     DocumentReference,
     Condition,
     FamilyMemberHistory,
+    CareTeam,
 }
 
 impl ResourceType {
@@ -73,6 +74,7 @@ impl ResourceType {
             ResourceType::DocumentReference => "DocumentReference",
             ResourceType::Condition => "Condition",
             ResourceType::FamilyMemberHistory => "FamilyMemberHistory",
+            ResourceType::CareTeam => "CareTeam",
         }
     }
 
@@ -86,6 +88,7 @@ impl ResourceType {
             ResourceType::DocumentReference => "DocumentReference",
             ResourceType::Condition => "Condition",
             ResourceType::FamilyMemberHistory => "FamilyMemberHistory",
+            ResourceType::CareTeam => "CareTeam",
         }
     }
 }

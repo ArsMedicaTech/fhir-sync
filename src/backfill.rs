@@ -22,6 +22,7 @@ use crate::config::{Config, DatabaseConfig};
 use crate::domain::resource::DomainResource;
 use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
+use crate::mapping::care_team::row_to_domain_care_team;
 use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
 use crate::mapping::dxresearch::row_to_domain_condition;
@@ -35,7 +36,7 @@ const BATCH_SIZE: u64 = 500;
 /// Dependency order for the multi-resource backfill. Resources with outgoing
 /// conditional references (appointment, encounter, document reference) are
 /// scanned last so their targets have already been sent to the sink.
-type Mapper = fn(&RowChange, &ColumnMap) -> Vec<DomainResource>;
+type Mapper = fn(&RowChange, &ColumnMap, &Config) -> Vec<DomainResource>;
 const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
     ("provider", "provider_no", practitioner_mapper),
     ("demographic", "demographic_no", patient_mapper),
@@ -89,7 +90,7 @@ pub async fn run(
 
     for (table, order_col, mapper) in BACKFILL_STEPS {
         let columns = column_maps.get(*table).expect("resolved column map");
-        total += scan_table(&mut conn, db, *table, *order_col, columns, tx, metrics, *mapper)
+        total += scan_table(&mut conn, db, cfg, *table, *order_col, columns, tx, metrics, *mapper)
             .await?;
     }
 
@@ -100,27 +101,68 @@ pub async fn run(
     Ok(total)
 }
 
-fn patient_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
-    row_to_domain_patient(change, columns).into_iter().map(DomainResource::Patient).collect()
+fn patient_mapper(change: &RowChange, columns: &ColumnMap, cfg: &Config) -> Vec<DomainResource> {
+    let mut out: Vec<DomainResource> = row_to_domain_patient(change, columns)
+        .into_iter()
+        .map(DomainResource::Patient)
+        .collect();
+    if cfg.oscar.care_team_enabled {
+        if let Some(ct) = row_to_domain_care_team(change, columns, &cfg.oscar) {
+            out.push(DomainResource::CareTeam(ct));
+        }
+    }
+    out
 }
 
-fn practitioner_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
-    row_to_domain_practitioner(change, columns).into_iter().map(DomainResource::Practitioner).collect()
+fn practitioner_mapper(
+    change: &RowChange,
+    columns: &ColumnMap,
+    _cfg: &Config,
+) -> Vec<DomainResource> {
+    row_to_domain_practitioner(change, columns)
+        .into_iter()
+        .map(DomainResource::Practitioner)
+        .collect()
 }
 
-fn merged_patient_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
-    row_to_merged_patient(change, columns).into_iter().map(DomainResource::Patient).collect()
+fn merged_patient_mapper(
+    change: &RowChange,
+    columns: &ColumnMap,
+    _cfg: &Config,
+) -> Vec<DomainResource> {
+    row_to_merged_patient(change, columns)
+        .into_iter()
+        .map(DomainResource::Patient)
+        .collect()
 }
 
-fn appointment_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
-    row_to_domain_appointment(change, columns).into_iter().map(DomainResource::Appointment).collect()
+fn appointment_mapper(
+    change: &RowChange,
+    columns: &ColumnMap,
+    _cfg: &Config,
+) -> Vec<DomainResource> {
+    row_to_domain_appointment(change, columns)
+        .into_iter()
+        .map(DomainResource::Appointment)
+        .collect()
 }
 
-fn dxresearch_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
-    row_to_domain_condition(change, columns).into_iter().map(DomainResource::Condition).collect()
+fn dxresearch_mapper(
+    change: &RowChange,
+    columns: &ColumnMap,
+    _cfg: &Config,
+) -> Vec<DomainResource> {
+    row_to_domain_condition(change, columns)
+        .into_iter()
+        .map(DomainResource::Condition)
+        .collect()
 }
 
-fn casemgmt_note_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainResource> {
+fn casemgmt_note_mapper(
+    change: &RowChange,
+    columns: &ColumnMap,
+    _cfg: &Config,
+) -> Vec<DomainResource> {
     // TODO: load and join billing.visittype per note for Encounter.class (D3/E8).
     row_to_casemgmt_note_resources(change, columns, None)
 }
@@ -128,12 +170,13 @@ fn casemgmt_note_mapper(change: &RowChange, columns: &ColumnMap) -> Vec<DomainRe
 async fn scan_table(
     conn: &mut Conn,
     db: &DatabaseConfig,
+    cfg: &Config,
     table: &str,
     order_col: &str,
     columns: &ColumnMap,
     tx: &Sender<SyncEvent>,
     metrics: &SharedMetrics,
-    mapper: fn(&RowChange, &ColumnMap) -> Vec<DomainResource>,
+    mapper: fn(&RowChange, &ColumnMap, &Config) -> Vec<DomainResource>,
 ) -> Result<usize> {
     let mut offset: u64 = 0;
     let mut total = 0usize;
@@ -171,7 +214,7 @@ async fn scan_table(
                 },
             };
 
-            let resources = mapper(&change, columns);
+            let resources = mapper(&change, columns, cfg);
             if resources.is_empty() {
                 continue;
             }

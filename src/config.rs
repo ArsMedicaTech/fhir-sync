@@ -42,6 +42,13 @@ pub struct OscarConfig {
     /// a FHIR `Appointment.status` value (e.g. "booked").
     #[serde(default = "default_appointment_status_map")]
     pub appointment_status_map: HashMap<String, String>,
+    /// Fallback MRP when `demographic.provider_no` is null, empty, or `-1`.
+    /// When omitted, patients with no usable MRP produce no CareTeam.
+    #[serde(default)]
+    pub default_mrp_provider_no: Option<String>,
+    /// Master switch for the Oscar → FHIR CareTeam sync.
+    #[serde(default = "default_true")]
+    pub care_team_enabled: bool,
 }
 
 impl Default for OscarConfig {
@@ -50,6 +57,8 @@ impl Default for OscarConfig {
             timezone: None,
             region: None,
             appointment_status_map: default_appointment_status_map(),
+            default_mrp_provider_no: None,
+            care_team_enabled: true,
         }
     }
 }
@@ -138,6 +147,8 @@ pub struct FhirConfig {
     pub oscar_provider_system: String,
     #[serde(default = "default_oscar_appointment_system")]
     pub oscar_appointment_system: String,
+    #[serde(default = "default_oscar_care_team_system")]
+    pub oscar_care_team_system: String,
     #[serde(default = "default_oscar_note_system")]
     pub oscar_note_system: String,
     #[serde(default = "default_oscar_note_revision_system")]
@@ -168,6 +179,7 @@ impl Default for FhirConfig {
             oscar_demographic_system: default_oscar_demographic_system(),
             oscar_provider_system: default_oscar_provider_system(),
             oscar_appointment_system: default_oscar_appointment_system(),
+            oscar_care_team_system: default_oscar_care_team_system(),
             oscar_note_system: default_oscar_note_system(),
             oscar_note_revision_system: default_oscar_note_revision_system(),
             oscar_note_document_system: default_oscar_note_document_system(),
@@ -197,6 +209,10 @@ fn default_oscar_provider_system() -> String {
 
 fn default_oscar_appointment_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string()
+}
+
+fn default_oscar_care_team_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-care-team".to_string()
 }
 
 fn default_oscar_note_system() -> String {
@@ -815,6 +831,8 @@ mod tests {
                 timezone: Some("Mars/Opportunity".to_string()),
                 region: None,
                 appointment_status_map: OscarConfig::default().appointment_status_map,
+                default_mrp_provider_no: None,
+                care_team_enabled: true,
             },
             debug: None,
         };
@@ -836,6 +854,8 @@ mod tests {
                 timezone: Some("America/Vancouver".to_string()),
                 region: None,
                 appointment_status_map: OscarConfig::default().appointment_status_map,
+                default_mrp_provider_no: None,
+                care_team_enabled: true,
             },
             debug: None,
         };
