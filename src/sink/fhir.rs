@@ -26,7 +26,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
 use crate::auth::TokenProvider;
-use crate::config::{Config, FhirConfig, OscarConfig};
+use crate::config::{Config, FhirConfig, OscarConfig, WritebackConfig};
 use crate::dispatch::DispatchNotification;
 use crate::domain::appointment::DomainAppointment;
 use crate::domain::care_team::DomainCareTeam;
