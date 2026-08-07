@@ -762,6 +762,61 @@ pub fn validate_oscar(cfg: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Validates writeback configuration. Fatal on error when `writeback.enabled`.
+pub fn validate_writeback(cfg: &Config) -> anyhow::Result<()> {
+    if !cfg.writeback.enabled {
+        return Ok(());
+    }
+
+    let tz = cfg
+        .oscar
+        .timezone
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("[writeback] requires [oscar].timezone to be set"))?;
+    if tz.parse::<chrono_tz::Tz>().is_err() {
+        anyhow::bail!("[oscar] timezone '{tz}' is not a valid IANA timezone");
+    }
+
+    if cfg.writeback.sentinel_update_user.is_empty() || cfg.writeback.sentinel_update_user.len() > 6
+    {
+        anyhow::bail!("[writeback].sentinel_update_user must be 1-6 characters");
+    }
+
+    if cfg.writeback.db.host.is_empty()
+        || cfg.writeback.db.user.is_empty()
+        || cfg.writeback.db.password.is_empty()
+    {
+        anyhow::bail!("[writeback.db] host, user, and password are required");
+    }
+
+    const VALID_STATUS: &[&str] = &[
+        "proposed", "pending", "booked", "arrived", "fulfilled", "cancelled", "noshow",
+        "entered-in-error", "checked-in", "waitlist",
+    ];
+    for (fhir, oscar) in &cfg.writeback.appointment_status_map {
+        if !VALID_STATUS.iter().any(|v| v.eq_ignore_ascii_case(fhir)) {
+            anyhow::bail!("[writeback.appointment_status_map] unknown FHIR status '{fhir}'");
+        }
+        if oscar.is_empty() || oscar.len() > 2 {
+            anyhow::bail!(
+                "[writeback.appointment_status_map] status '{fhir}' maps to '{oscar}', which must be 1-2 chars"
+            );
+        }
+    }
+
+    const VALID_RESOURCE_TYPES: &[&str] =
+        &["Patient", "Appointment", "Encounter", "DocumentReference"];
+    for r in &cfg.writeback.hapi_resource_types {
+        if !VALID_RESOURCE_TYPES.contains(&r.as_str()) {
+            anyhow::bail!(
+                "[writeback].hapi_resource_types contains unknown resource type '{r}'"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Loads `Config.toml` from `CONFIG_PATH` if set, otherwise from the CWD.
 pub fn load_config() -> anyhow::Result<Config> {
     let path = env::var("CONFIG_PATH").unwrap_or_else(|_| "Config.toml".to_string());
@@ -782,6 +837,7 @@ pub fn load_config() -> anyhow::Result<Config> {
     validate_replication(&config.replication, &config.dispatch)?;
     validate_dispatch(&config.dispatch)?;
     validate_oscar(&config)?;
+    validate_writeback(&config)?;
 
     Ok(config)
 }
