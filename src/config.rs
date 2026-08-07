@@ -24,6 +24,10 @@ pub struct Config {
     /// Oscar-specific settings (timezone for appointment conversion, etc.).
     #[serde(default)]
     pub oscar: OscarConfig,
+    /// AMT → Oscar write-back pipeline. Off by default; see
+    /// `TASK_FEATURES_SPEC_OSCAR_WRITEBACK.md`.
+    #[serde(default)]
+    pub writeback: WritebackConfig,
 }
 
 use std::collections::HashMap;
@@ -75,6 +79,98 @@ fn default_appointment_status_map() -> HashMap<String, String> {
     m.insert("C".to_string(), "cancelled".to_string());
     m.insert("N".to_string(), "noshow".to_string());
     m
+}
+
+fn default_sentinel_update_user() -> String {
+    "999997".to_string()
+}
+
+fn default_hapi_resource_types() -> Vec<String> {
+    vec![
+        "Patient".to_string(),
+        "Appointment".to_string(),
+        "Encounter".to_string(),
+        "DocumentReference".to_string(),
+    ]
+}
+
+fn default_writeback_port() -> u16 {
+    3316
+}
+
+/// MariaDB connection used only by the AMT → Oscar write-back sink.
+/// Kept separate from [database] because the sink needs a different grant set.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WritebackDatabaseConfig {
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_schema")]
+    pub schema: String,
+    #[serde(default = "default_writeback_port")]
+    pub port: u16,
+}
+
+impl Default for WritebackDatabaseConfig {
+    fn default() -> Self {
+        Self {
+            user: String::new(),
+            password: String::new(),
+            host: String::new(),
+            schema: default_schema(),
+            port: default_writeback_port(),
+        }
+    }
+}
+
+/// AMT → Oscar write-back configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WritebackConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_state_dir")]
+    pub state_dir: String,
+    #[serde(default = "default_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+    #[serde(default = "default_retry_max_attempts")]
+    pub retry_max_attempts: u32,
+    #[serde(default = "default_retry_base_ms")]
+    pub retry_base_ms: u64,
+    #[serde(default = "default_dead_letter_path")]
+    pub dead_letter_path: String,
+    #[serde(default = "default_sentinel_update_user")]
+    pub sentinel_update_user: String,
+    #[serde(default = "default_hapi_resource_types")]
+    pub hapi_resource_types: Vec<String>,
+    /// FHIR `Appointment.status` → Oscar `status` char.
+    /// Example: cancelled → "C".
+    #[serde(default)]
+    pub appointment_status_map: HashMap<String, String>,
+    #[serde(default)]
+    pub db: WritebackDatabaseConfig,
+}
+
+impl Default for WritebackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            state_dir: default_state_dir(),
+            poll_interval_ms: default_poll_interval_ms(),
+            page_size: default_page_size(),
+            retry_max_attempts: default_retry_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            dead_letter_path: default_dead_letter_path(),
+            sentinel_update_user: default_sentinel_update_user(),
+            hapi_resource_types: default_hapi_resource_types(),
+            appointment_status_map: HashMap::new(),
+            db: WritebackDatabaseConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -812,6 +908,7 @@ mod tests {
             oscar_enabled: true,
             oscar: OscarConfig::default(),
             debug: None,
+            writeback: WritebackConfig::default(),
         };
         let err = validate_oscar(&cfg).unwrap_err().to_string();
         assert!(err.contains("timezone is required"));
@@ -835,6 +932,7 @@ mod tests {
                 care_team_enabled: true,
             },
             debug: None,
+            writeback: WritebackConfig::default(),
         };
         let err = validate_oscar(&cfg).unwrap_err().to_string();
         assert!(err.contains("not a valid IANA timezone"));
@@ -858,6 +956,7 @@ mod tests {
                 care_team_enabled: true,
             },
             debug: None,
+            writeback: WritebackConfig::default(),
         };
         assert!(validate_oscar(&cfg).is_ok());
     }
@@ -874,6 +973,7 @@ mod tests {
             oscar_enabled: false,
             oscar: OscarConfig::default(),
             debug: None,
+            writeback: WritebackConfig::default(),
         };
         assert!(validate_oscar(&cfg).is_ok());
     }
