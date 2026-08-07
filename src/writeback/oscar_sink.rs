@@ -131,6 +131,7 @@ impl OscarTx {
             push_col(&mut cols, &mut params, "month_of_birth", row.month_of_birth.as_deref());
             push_col(&mut cols, &mut params, "date_of_birth", row.date_of_birth.as_deref());
             push_col(&mut cols, &mut params, "sex", row.sex.as_deref());
+            push_col(&mut cols, &mut params, "patient_status", row.patient_status.as_deref());
 
             cols.push("lastUpdateDate".to_string());
             params.push(Value::Bytes(now.as_bytes().to_vec()));

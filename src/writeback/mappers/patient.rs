@@ -21,6 +21,7 @@ pub struct DemographicRow {
     pub month_of_birth: Option<String>,
     pub date_of_birth: Option<String>,
     pub sex: Option<String>,
+    pub patient_status: Option<String>,
 }
 
 /// Maps a FHIR `Patient` resource to an Oscar `demographic` row.
@@ -187,6 +188,12 @@ pub fn fhir_patient_to_row(
         };
     }
 
+    // TODO: deceasedBoolean / deceasedDateTime mapping is unhandled.
+    row.patient_status = match patient.get("active").and_then(Value::as_bool) {
+        Some(false) => Some("IN".to_string()),
+        _ => Some("AC".to_string()),
+    };
+
     if demographic_no.as_deref() == Some("0") {
         return Err(MappingError::PlaceholderPatient);
     }
@@ -216,7 +223,8 @@ mod tests {
                 { "system": "email", "value": "jane@example.com" }
             ],
             "birthDate": dob,
-            "gender": gender
+            "gender": gender,
+            "active": true
         })
     }
 
@@ -243,6 +251,31 @@ mod tests {
         assert_eq!(row.month_of_birth, Some("03".to_string()));
         assert_eq!(row.date_of_birth, Some("15".to_string()));
         assert_eq!(row.sex, Some("F".to_string()));
+        assert_eq!(row.patient_status, Some("AC".to_string()));
+    }
+
+    #[test]
+    fn inactive_patient_maps_to_in_status() {
+        let mut p = patient("1990-03-15", "female");
+        p["active"] = false.into();
+        let (_, row) = fhir_patient_to_row(
+            &p,
+            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
+        )
+        .unwrap();
+        assert_eq!(row.patient_status, Some("IN".to_string()));
+    }
+
+    #[test]
+    fn missing_active_defaults_to_ac() {
+        let mut p = patient("1990-03-15", "female");
+        p.as_object_mut().unwrap().remove("active");
+        let (_, row) = fhir_patient_to_row(
+            &p,
+            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
+        )
+        .unwrap();
+        assert_eq!(row.patient_status, Some("AC".to_string()));
     }
 
     #[test]
