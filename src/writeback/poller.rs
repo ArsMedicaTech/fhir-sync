@@ -1,9 +1,13 @@
 //! HAPI `_history` poller for the AMT → Oscar write-back path.
 //!
 //! Polls the local HAPI server for `Patient`, `Appointment`, and
-//! `DocumentReference` changes, suppresses Oscar-originated echoes using
-//! `meta.source`, maps AMT-authored resources to Oscar rows, and writes them
-//! through `OscarSink`.
+//! `DocumentReference` changes, suppresses Oscar-originated and write-back
+//! echoes using `meta.source`, maps AMT-authored resources to Oscar rows, and
+//! writes them through `OscarSink`.
+//!
+//! Each successful write is committed only after the generated Oscar
+//! identifier has been written back to HAPI, so an orphan Oscar row cannot be
+//! created by a failed HAPI update.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,18 +16,19 @@ use anyhow::{Context, Result};
 use chrono_tz::Tz;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_json::Value;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
 use crate::auth::TokenProvider;
 use crate::config::{Config, FhirConfig};
-use crate::writeback::authorship::is_oscar_origin;
+use crate::writeback::authorship::{is_oscar_origin, is_writeback_source, WRITE_BACK_SOURCE};
 use crate::writeback::deadletter::{write as write_dead_letter, DeadLetter};
 use crate::writeback::mappers::{
     fhir_appointment_to_row, fhir_document_reference_to_row, fhir_patient_to_row,
 };
-use crate::writeback::oscar_sink::OscarSink;
+use crate::writeback::oscar_sink::{OscarSink, OscarTx};
 
 const SINCE_START: &str = "1900-01-01T00:00:00.000Z";
 
@@ -153,6 +158,14 @@ async fn poll_one_cycle(
                 continue;
             }
 
+            if is_writeback_source(&event.resource) {
+                info!(
+                    "writeback: skipping write-back echo {} {}",
+                    event.resource_type, event.id
+                );
+                continue;
+            }
+
             if event.resource.get("meta").and_then(|m| m.get("source")).is_none() {
                 warn!(
                     "writeback: {} {} has no meta.source; treating as AMT-authored",
@@ -171,11 +184,13 @@ async fn poll_one_cycle(
                 HistoryOp::Create | HistoryOp::Update => {}
             }
 
-            if let Err(e) = process_resource(cfg, sink, tz, &event).await {
+            let mut tx = sink.begin().await?;
+            if let Err(e) = process_resource(client, cfg, token.as_deref(), &mut tx, tz, &event).await {
                 warn!(
                     "writeback: dead-lettering {}/{}: {e:?}",
                     event.resource_type, event.id
                 );
+                tx.rollback().await.ok();
                 let dl = DeadLetter {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     id: event.id.clone(),
@@ -185,6 +200,9 @@ async fn poll_one_cycle(
                     payload: Some(event.resource.clone()),
                 };
                 write_dead_letter(&cfg.writeback.dead_letter_path, &dl).await?;
+            } else {
+                tx.commit().await?;
+                info!("writeback: committed {}/{}" , event.resource_type, event.id);
             }
 
             checkpoint.since = event.last_updated.clone();
@@ -258,19 +276,25 @@ fn parse_history_entry(entry: &Value) -> Option<HistoryEvent> {
 }
 
 async fn process_resource(
+    client: &Client,
     cfg: &Config,
-    sink: &OscarSink,
+    token: Option<&str>,
+    tx: &mut OscarTx,
     tz: &Tz,
     event: &HistoryEvent,
 ) -> Result<()> {
     match event.resource_type.as_str() {
         "Patient" => {
-            let (id, row) = fhir_patient_to_row(&event.resource, &cfg.fhir.oscar_demographic_system)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            sink.write_demographic(id.as_deref(), &row, tz).await?;
+            let (existing_id, row) =
+                fhir_patient_to_row(&event.resource, &cfg.fhir.oscar_demographic_system)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let new_id = tx.write_demographic(existing_id.as_deref(), &row, tz).await?;
+            if existing_id.is_none() {
+                hapi_update_identifier(client, cfg, token, event, &new_id).await?;
+            }
         }
         "Appointment" => {
-            let (id, row) = fhir_appointment_to_row(
+            let (existing_id, row) = fhir_appointment_to_row(
                 &event.resource,
                 &cfg.fhir.oscar_demographic_system,
                 &cfg.fhir.oscar_provider_system,
@@ -279,10 +303,13 @@ async fn process_resource(
                 tz,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            sink.write_appointment(id.as_deref(), &row).await?;
+            let new_id = tx.write_appointment(existing_id.as_deref(), &row).await?;
+            if existing_id.is_none() {
+                hapi_update_identifier(client, cfg, token, event, &new_id).await?;
+            }
         }
         "DocumentReference" => {
-            let (id, row) = fhir_document_reference_to_row(
+            let (existing_id, row) = fhir_document_reference_to_row(
                 &event.resource,
                 &cfg.fhir.oscar_note_document_system,
                 &cfg.fhir.oscar_demographic_system,
@@ -291,7 +318,10 @@ async fn process_resource(
                 tz,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            sink.write_note(id.as_deref(), &row, tz).await?;
+            let new_id = tx.write_note(existing_id.as_deref(), &row, tz).await?;
+            if existing_id.is_none() {
+                hapi_update_identifier(client, cfg, token, event, &new_id).await?;
+            }
         }
         "Encounter" => {
             info!(
@@ -304,6 +334,75 @@ async fn process_resource(
         }
     }
     Ok(())
+}
+
+async fn hapi_update_identifier(
+    client: &Client,
+    cfg: &Config,
+    token: Option<&str>,
+    event: &HistoryEvent,
+    oscar_id: &str,
+) -> Result<()> {
+    let system = match event.resource_type.as_str() {
+        "Patient" => &cfg.fhir.oscar_demographic_system,
+        "Appointment" => &cfg.fhir.oscar_appointment_system,
+        "DocumentReference" => &cfg.fhir.oscar_note_document_system,
+        other => anyhow::bail!("cannot write Oscar identifier for resource type {other}"),
+    };
+
+    let mut resource = event.resource.clone();
+    set_identifier(&mut resource, system, oscar_id);
+    set_meta_source(&mut resource, WRITE_BACK_SOURCE);
+
+    let put_url = format!(
+        "{}/{}/{}",
+        cfg.fhir.base_url.trim_end_matches('/'),
+        event.resource_type,
+        event.id
+    );
+
+    let mut req = client
+        .put(&put_url)
+        .header("Accept", "application/fhir+json")
+        .header("Content-Type", "application/fhir+json")
+        .json(&resource);
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+
+    let resp = req.send().await.with_context(|| format!("PUT {put_url}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("HAPI identifier write-back failed ({status}): {text}");
+    }
+
+    info!(
+        "writeback: wrote {}/{} identifier {}",
+        event.resource_type, event.id, oscar_id
+    );
+    Ok(())
+}
+
+fn set_identifier(resource: &mut Value, system: &str, value: &str) {
+    if let Some(arr) = resource
+        .get_mut("identifier")
+        .and_then(Value::as_array_mut)
+    {
+        if let Some(existing) = arr.iter_mut().find(|i| {
+            i.get("system").and_then(Value::as_str) == Some(system)
+        }) {
+            existing["value"] = value.into();
+            return;
+        }
+        arr.push(json!({"system": system, "value": value}));
+    } else {
+        resource["identifier"] = json!([{"system": system, "value": value}]);
+    }
+}
+
+fn set_meta_source(resource: &mut Value, source: &str) {
+    resource["meta"] = json!({"source": source});
 }
 
 async fn load_checkpoint(path: &str) -> WritebackCheckpoint {
@@ -324,5 +423,3 @@ async fn save_checkpoint(path: &str, cp: &WritebackCheckpoint) -> Result<()> {
         .with_context(|| format!("renaming checkpoint to {path}"))?;
     Ok(())
 }
-
-

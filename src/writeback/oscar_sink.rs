@@ -4,18 +4,22 @@
 //! tables (`demographic`, `appointment`, `casemgmt_note`).  `casemgmt_note` is
 //! append-only: it never runs `UPDATE`, only `INSERT`.  There are no `DELETE`
 //! statements anywhere.
+//!
+//! Every write is executed inside an explicit transaction.  The caller decides
+//! when to `COMMIT` or `ROLLBACK`, which lets the HAPI identifier write-back
+//! run while the Oscar row is still uncommitted.
 
 use anyhow::{Context, Result};
 use chrono::TimeZone;
 use chrono_tz::Tz;
-use mysql_async::{prelude::*, Params, Value};
+use mysql_async::{prelude::*, Conn, Params, Value};
 use tracing::{info, instrument};
 
 use crate::config::WritebackDatabaseConfig;
 use crate::writeback::mappers::{AppointmentRow, DemographicRow, NoteRow};
 
-/// MariaDB write-back sink.  Holds a connection pool so every public method
-/// gets its own `Conn` for the duration of one statement.
+/// MariaDB write-back sink.  Holds a connection pool so every transaction
+/// gets its own `Conn`.
 pub struct OscarSink {
     pool: mysql_async::Pool,
     sentinel: String,
@@ -33,6 +37,30 @@ impl OscarSink {
         }
     }
 
+    /// Begins a new write-back transaction.
+    pub async fn begin(&self) -> Result<OscarTx> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to Oscar for writeback")?;
+        conn.query_drop("START TRANSACTION")
+            .await
+            .context("starting writeback transaction")?;
+        Ok(OscarTx {
+            conn,
+            sentinel: self.sentinel.clone(),
+        })
+    }
+}
+
+/// An in-flight write-back transaction.  The caller commits or rolls back.
+pub struct OscarTx {
+    conn: Conn,
+    sentinel: String,
+}
+
+impl OscarTx {
     /// INSERT or UPDATE a `demographic` row.
     ///
     /// When `existing` is `Some(demographic_no)`, only the allowlisted columns
@@ -40,7 +68,7 @@ impl OscarSink {
     /// `demographic_no` is returned.
     #[instrument(skip(self, row))]
     pub async fn write_demographic(
-        &self,
+        &mut self,
         existing: Option<&str>,
         row: &DemographicRow,
         tz: &Tz,
@@ -78,12 +106,8 @@ impl OscarSink {
             );
             params.push(Value::Bytes(id.as_bytes().to_vec()));
 
-            let mut conn = self
-                .pool
-                .get_conn()
-                .await
-                .context("connecting for demographic update")?;
-            conn.exec_drop(sql, Params::Positional(params))
+            self.conn
+                .exec_drop(sql, Params::Positional(params))
                 .await
                 .context("updating demographic")?;
             info!("demographic updated: demographic_no={id}");
@@ -120,16 +144,12 @@ impl OscarSink {
                 placeholders.join(", ")
             );
 
-            let mut conn = self
-                .pool
-                .get_conn()
-                .await
-                .context("connecting for demographic insert")?;
-            conn.exec_drop(sql, Params::Positional(params))
+            self.conn
+                .exec_drop(sql, Params::Positional(params))
                 .await
                 .context("inserting demographic")?;
 
-            let id = last_insert_id(&mut conn).await?;
+            let id = self.last_insert_id().await?;
             info!("demographic inserted: demographic_no={id}");
             Ok(id.to_string())
         }
@@ -138,7 +158,7 @@ impl OscarSink {
     /// INSERT or UPDATE an `appointment` row.
     #[instrument(skip(self, row))]
     pub async fn write_appointment(
-        &self,
+        &mut self,
         existing: Option<&str>,
         row: &AppointmentRow,
     ) -> Result<String> {
@@ -169,12 +189,8 @@ impl OscarSink {
             );
             params.push(Value::Bytes(id.as_bytes().to_vec()));
 
-            let mut conn = self
-                .pool
-                .get_conn()
-                .await
-                .context("connecting for appointment update")?;
-            conn.exec_drop(sql, Params::Positional(params))
+            self.conn
+                .exec_drop(sql, Params::Positional(params))
                 .await
                 .context("updating appointment")?;
             info!("appointment updated: appointment_no={id}");
@@ -201,16 +217,12 @@ impl OscarSink {
                 placeholders.join(", ")
             );
 
-            let mut conn = self
-                .pool
-                .get_conn()
-                .await
-                .context("connecting for appointment insert")?;
-            conn.exec_drop(sql, Params::Positional(params))
+            self.conn
+                .exec_drop(sql, Params::Positional(params))
                 .await
                 .context("inserting appointment")?;
 
-            let id = last_insert_id(&mut conn).await?;
+            let id = self.last_insert_id().await?;
             info!("appointment inserted: appointment_no={id}");
             Ok(id.to_string())
         }
@@ -223,7 +235,7 @@ impl OscarSink {
     /// for the new revision; otherwise a fresh v4 UUID is generated.
     #[instrument(skip(self, row))]
     pub async fn write_note(
-        &self,
+        &mut self,
         existing_uuid: Option<&str>,
         row: &NoteRow,
         tz: &Tz,
@@ -286,17 +298,43 @@ impl OscarSink {
             placeholders.join(", ")
         );
 
-        let mut conn = self
-            .pool
-            .get_conn()
-            .await
-            .context("connecting for casemgmt_note insert")?;
-        conn.exec_drop(sql, Params::Positional(params))
+        self.conn
+            .exec_drop(sql, Params::Positional(params))
             .await
             .context("inserting casemgmt_note")?;
 
         info!("casemgmt_note inserted: uuid={uuid}");
         Ok(uuid)
+    }
+
+    /// Commits the transaction.
+    pub async fn commit(mut self) -> Result<()> {
+        self.conn
+            .query_drop("COMMIT")
+            .await
+            .context("committing writeback transaction")?;
+        Ok(())
+    }
+
+    /// Rolls the transaction back.
+    pub async fn rollback(mut self) -> Result<()> {
+        self.conn
+            .query_drop("ROLLBACK")
+            .await
+            .context("rolling back writeback transaction")?;
+        Ok(())
+    }
+
+    async fn last_insert_id(&mut self) -> Result<u64> {
+        let rows: Vec<(u64,)> = self
+            .conn
+            .query("SELECT LAST_INSERT_ID()")
+            .await
+            .context("fetching LAST_INSERT_ID")?;
+        rows.into_iter()
+            .next()
+            .map(|r| r.0)
+            .ok_or_else(|| anyhow::anyhow!("LAST_INSERT_ID() returned no rows"))
     }
 }
 
@@ -320,15 +358,4 @@ fn push_col(cols: &mut Vec<String>, params: &mut Vec<Value>, col: &str, val: Opt
         cols.push(col.to_string());
         params.push(Value::Bytes(v.as_bytes().to_vec()));
     }
-}
-
-async fn last_insert_id(conn: &mut mysql_async::Conn) -> Result<u64> {
-    let rows: Vec<(u64,)> = conn
-        .query("SELECT LAST_INSERT_ID()")
-        .await
-        .context("fetching LAST_INSERT_ID")?;
-    rows.into_iter()
-        .next()
-        .map(|r| r.0)
-        .ok_or_else(|| anyhow::anyhow!("LAST_INSERT_ID() returned no rows"))
 }
