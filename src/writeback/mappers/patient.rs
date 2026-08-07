@@ -33,6 +33,17 @@ pub fn fhir_patient_to_row(
     patient: &Value,
     oscar_demographic_system: &str,
 ) -> Result<(Option<String>, DemographicRow), MappingError> {
+    // Merge tombstones (e.g. active=false with link:replaced-by) are not real
+    // patient records and must not be written back to Oscar.
+    if patient
+        .get("link")
+        .and_then(Value::as_array)
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
+        return Err(MappingError::MergeTombstone);
+    }
+
     let mut row = DemographicRow::default();
 
     let mut demographic_no: Option<String> = None;
@@ -283,5 +294,36 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, MappingError::PlaceholderPatient);
+    }
+
+    #[test]
+    fn merge_tombstone_is_rejected() {
+        let mut p = patient("1990-03-15", "female");
+        p["active"] = false.into();
+        p["link"] = serde_json::json!([
+            {
+                "type": "replaced-by",
+                "other": { "reference": "Patient/9999" }
+            }
+        ]);
+        let err = fhir_patient_to_row(
+            &p,
+            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
+        )
+        .unwrap_err();
+        assert_eq!(err, MappingError::MergeTombstone);
+    }
+
+    #[test]
+    fn empty_link_array_is_allowed() {
+        let mut p = patient("1990-03-15", "female");
+        p["link"] = serde_json::json!([]);
+        let (id, row) = fhir_patient_to_row(
+            &p,
+            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
+        )
+        .unwrap();
+        assert_eq!(id, Some("101".to_string()));
+        assert_eq!(row.last_name, Some("Smith".to_string()));
     }
 }

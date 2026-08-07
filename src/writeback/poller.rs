@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::SecondsFormat;
 use chrono_tz::Tz;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -26,11 +27,9 @@ use crate::config::{Config, FhirConfig};
 use crate::writeback::authorship::{is_oscar_origin, is_writeback_source, WRITE_BACK_SOURCE};
 use crate::writeback::deadletter::{write as write_dead_letter, DeadLetter};
 use crate::writeback::mappers::{
-    fhir_appointment_to_row, fhir_document_reference_to_row, fhir_patient_to_row,
+    fhir_appointment_to_row, fhir_document_reference_to_row, fhir_patient_to_row, MappingError,
 };
 use crate::writeback::oscar_sink::{OscarSink, OscarTx};
-
-const SINCE_START: &str = "1900-01-01T00:00:00.000Z";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct WritebackCheckpoint {
@@ -73,7 +72,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let checkpoint_path = format!("{state_dir}/writeback_checkpoint.json");
     let mut checkpoint = load_checkpoint(&checkpoint_path).await;
     if checkpoint.since.is_empty() {
-        checkpoint.since = SINCE_START.to_string();
+        // A fresh checkpoint starts at "now" so pre-existing HAPI resources are
+        // not retroactively treated as AMT-authored writes on first run.
+        checkpoint.since = chrono::Utc::now()
+            .to_rfc3339_opts(SecondsFormat::Millis, true);
     }
 
     let poll_interval = Duration::from_millis(cfg.writeback.poll_interval_ms);
@@ -152,7 +154,7 @@ async fn poll_one_cycle(
 
             if is_oscar_origin(&event.resource) {
                 info!(
-                    "writeback: skipping Oscar-originated {} {}",
+                    "writeback: skipping Oscar-originated/sourceless {} {}",
                     event.resource_type, event.id
                 );
                 continue;
@@ -164,13 +166,6 @@ async fn poll_one_cycle(
                     event.resource_type, event.id
                 );
                 continue;
-            }
-
-            if event.resource.get("meta").and_then(|m| m.get("source")).is_none() {
-                warn!(
-                    "writeback: {} {} has no meta.source; treating as AMT-authored",
-                    event.resource_type, event.id
-                );
             }
 
             match event.op {
@@ -285,9 +280,20 @@ async fn process_resource(
 ) -> Result<()> {
     match event.resource_type.as_str() {
         "Patient" => {
-            let (existing_id, row) =
-                fhir_patient_to_row(&event.resource, &cfg.fhir.oscar_demographic_system)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let (existing_id, row) = match fhir_patient_to_row(
+                &event.resource,
+                &cfg.fhir.oscar_demographic_system,
+            ) {
+                Ok(v) => v,
+                Err(MappingError::MergeTombstone) => {
+                    info!(
+                        "writeback: skipping merge tombstone Patient {}",
+                        event.id
+                    );
+                    return Ok(());
+                }
+                Err(e) => return Err(anyhow::anyhow!("{e}")),
+            };
             let new_id = tx.write_demographic(existing_id.as_deref(), &row, tz).await?;
             if existing_id.is_none() {
                 hapi_update_identifier(client, cfg, token, event, &new_id).await?;

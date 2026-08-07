@@ -16,14 +16,16 @@ use crate::sink::fhir::META_SOURCE;
 pub const WRITE_BACK_SOURCE: &str = "urn:arsmedicatech:fhir-sync:writeback";
 
 /// Returns `true` when `meta.source` identifies this resource as originating
-/// from the Oscar → FHIR CDC.  Such resources must never be written back.
+/// from the Oscar → FHIR CDC, **or when `meta.source` is missing/absent**.
+/// Such resources must never be written back; an unknown source is treated
+/// as Oscar-origin to avoid corrupting pre-existing records.
 pub fn is_oscar_origin(resource: &Value) -> bool {
     resource
         .get("meta")
         .and_then(|m| m.get("source"))
         .and_then(Value::as_str)
         .map(|s| s == META_SOURCE)
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Returns `true` when `meta.source` identifies this resource as a
@@ -35,4 +37,53 @@ pub fn is_writeback_source(resource: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|s| s == WRITE_BACK_SOURCE)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::sink::fhir::META_SOURCE;
+
+    use super::{is_oscar_origin, is_writeback_source, WRITE_BACK_SOURCE};
+
+    #[test]
+    fn oscar_origin_is_recognized() {
+        let resource = json!({"meta": {"source": META_SOURCE}});
+        assert!(is_oscar_origin(&resource));
+        assert!(!is_writeback_source(&resource));
+    }
+
+    #[test]
+    fn writeback_source_is_recognized() {
+        let resource = json!({"meta": {"source": WRITE_BACK_SOURCE}});
+        assert!(!is_oscar_origin(&resource));
+        assert!(is_writeback_source(&resource));
+    }
+
+    #[test]
+    fn unknown_amt_source_is_not_oscar_or_writeback() {
+        let resource = json!({"meta": {"source": "https://example.org/fhir"}});
+        assert!(!is_oscar_origin(&resource));
+        assert!(!is_writeback_source(&resource));
+    }
+
+    #[test]
+    fn missing_source_fails_closed_as_oscar_origin() {
+        let resource = json!({"id": "no-source"});
+        assert!(
+            is_oscar_origin(&resource),
+            "missing source must be treated as Oscar-origin"
+        );
+        assert!(!is_writeback_source(&resource));
+    }
+
+    #[test]
+    fn null_source_fails_closed_as_oscar_origin() {
+        let resource = json!({"meta": {"source": null}});
+        assert!(
+            is_oscar_origin(&resource),
+            "null source must be treated as Oscar-origin"
+        );
+    }
 }

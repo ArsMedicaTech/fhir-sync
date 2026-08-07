@@ -21,6 +21,7 @@ pub enum MappingError {
     MissingField(String),
     InvalidValue { field: String, value: String },
     PlaceholderPatient,
+    MergeTombstone,
 }
 
 impl fmt::Display for MappingError {
@@ -38,6 +39,9 @@ impl fmt::Display for MappingError {
             }
             MappingError::PlaceholderPatient => {
                 write!(f, "demographic_no 0 is not a valid patient")
+            }
+            MappingError::MergeTombstone => {
+                write!(f, "patient has a link element (merge tombstone)")
             }
         }
     }
