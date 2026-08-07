@@ -13,14 +13,13 @@ use chrono_tz::Tz;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
 use crate::auth::TokenProvider;
 use crate::config::{Config, FhirConfig};
 use crate::writeback::authorship::is_oscar_origin;
+use crate::writeback::deadletter::{write as write_dead_letter, DeadLetter};
 use crate::writeback::mappers::{
     fhir_appointment_to_row, fhir_document_reference_to_row, fhir_patient_to_row,
 };
@@ -177,7 +176,15 @@ async fn poll_one_cycle(
                     "writeback: dead-lettering {}/{}: {e:?}",
                     event.resource_type, event.id
                 );
-                write_dead_letter(&cfg.writeback.dead_letter_path, &event, &e).await?;
+                let dl = DeadLetter {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    id: event.id.clone(),
+                    resource_type: event.resource_type.clone(),
+                    version_id: Some(event.version_id.clone()),
+                    error: format!("{e}"),
+                    payload: Some(event.resource.clone()),
+                };
+                write_dead_letter(&cfg.writeback.dead_letter_path, &dl).await?;
             }
 
             checkpoint.since = event.last_updated.clone();
@@ -318,38 +325,4 @@ async fn save_checkpoint(path: &str, cp: &WritebackCheckpoint) -> Result<()> {
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct DeadLetter {
-    timestamp: String,
-    id: String,
-    resource_type: String,
-    version_id: String,
-    error: String,
-    payload: Value,
-}
 
-async fn write_dead_letter(
-    path: &str,
-    event: &HistoryEvent,
-    err: &anyhow::Error,
-) -> Result<()> {
-    let dl = DeadLetter {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        id: event.id.clone(),
-        resource_type: event.resource_type.clone(),
-        version_id: event.version_id.clone(),
-        error: format!("{err}"),
-        payload: event.resource.clone(),
-    };
-    let line = serde_json::to_string(&dl)? + "\n";
-    let mut file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .await
-        .with_context(|| format!("opening dead-letter file {path}"))?;
-    file.write_all(line.as_bytes())
-        .await
-        .with_context(|| format!("writing dead-letter file {path}"))?;
-    Ok(())
-}
