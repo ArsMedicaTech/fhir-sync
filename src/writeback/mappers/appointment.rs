@@ -66,10 +66,12 @@ pub fn fhir_appointment_to_row(
         .get("status")
         .and_then(Value::as_str)
         .ok_or_else(|| MappingError::MissingField("status".to_string()))?;
-    row.status = status_map
-        .get(status)
-        .cloned()
-        .ok_or_else(|| MappingError::UnmappedAppointmentStatus(status.to_string()))?;
+    row.status = Some(
+        status_map
+            .get(status)
+            .cloned()
+            .ok_or_else(|| MappingError::UnmappedAppointmentStatus(status.to_string()))?,
+    );
 
     row.reason = reason_text(appointment);
     row.demographic_no = Some(demographic_no);
