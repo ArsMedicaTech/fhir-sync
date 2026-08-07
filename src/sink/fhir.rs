@@ -38,7 +38,7 @@ use crate::event::{Op, ResourceType, Source, SyncEvent};
 mod oscar2;
 use crate::metrics::SharedMetrics;
 
-const META_SOURCE: &str = "urn:arsmedicatech:fhir-sync:oscar";
+pub(crate) const META_SOURCE: &str = "urn:arsmedicatech:fhir-sync:oscar";
 
 /// Runs the sink to completion (until the channel closes).
 pub async fn run(

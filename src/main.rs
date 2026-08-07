@@ -93,6 +93,10 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(replication::run(cfg.clone(), dispatch_tx.clone()))
     } else { never() };
 
+    let writeback_task = if cfg.writeback.enabled {
+        tokio::spawn(writeback::run(cfg.clone()))
+    } else { never() };
+
     // graceful shutdown on Ctrl-C
     select! {
         res = source_task   => handle_exit("source",   res),
@@ -101,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         res = api_task      => handle_exit("api",      res),
         res = replication_task => handle_exit("replication", res),
         res = dispatch_task => handle_exit("dispatch", res),
+        res = writeback_task => handle_exit("writeback", res),
         _  = signal::ctrl_c() => info!("Ctrl-C received, shutting down"),
     };
 
