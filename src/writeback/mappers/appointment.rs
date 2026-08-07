@@ -81,15 +81,18 @@ pub fn fhir_appointment_to_row(
 }
 
 fn identifier_value(resource: &Value, system: &str) -> Option<String> {
-    resource
-        .get("identifier")
-        .and_then(Value::as_array)
-        .and_then(|ids| {
-            ids.iter()
-                .find(|i| i.get("system").and_then(Value::as_str) == Some(system))
-                .and_then(|i| i.get("value").and_then(Value::as_str))
-        })
-        .map(String::from)
+    let id = resource.get("identifier")?;
+    if let Some(arr) = id.as_array() {
+        return arr
+            .iter()
+            .find(|i| i.get("system").and_then(Value::as_str) == Some(system))
+            .and_then(|i| i.get("value").and_then(Value::as_str))
+            .map(String::from);
+    }
+    if id.get("system").and_then(Value::as_str) == Some(system) {
+        return id.get("value").and_then(Value::as_str).map(String::from);
+    }
+    None
 }
 
 fn participant_identifier_value(resource: &Value, system: &str) -> Option<String> {
