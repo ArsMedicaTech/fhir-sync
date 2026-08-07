@@ -1352,8 +1352,8 @@ fn to_appointment_instant(
 ) -> Result<String, SyncFailure> {
     let naive_date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid appointment_date '{date}': {e}")))?;
-    let naive_time = NaiveTime::parse_from_str(time, "%H:%M:%S")
-        .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid start/end_time '{time}': {e}")))?;
+    let naive_time = NaiveTime::parse_from_str(time, "%H:%M:%S%.f")
+    .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid start/end_time '{time}': {e}")))?;
     let naive = naive_date.and_time(naive_time);
 
     let tz: chrono_tz::Tz = tz_name
@@ -1381,8 +1381,8 @@ fn to_appointment_instant(
 
 /// Computes `minutesDuration` from the naive local start and end times (D5).
 fn appointment_minutes_duration(start: &str, end: &str) -> Option<u32> {
-    let start = NaiveTime::parse_from_str(start, "%H:%M:%S").ok()?;
-    let end = NaiveTime::parse_from_str(end, "%H:%M:%S").ok()?;
+    let start = NaiveTime::parse_from_str(start, "%H:%M:%S%.f").ok()?;
+    let end = NaiveTime::parse_from_str(end, "%H:%M:%S%.f").ok()?;
     let seconds = (end - start).num_seconds();
     if seconds > 0 { Some((seconds / 60) as u32) } else { None }
 }

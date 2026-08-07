@@ -59,8 +59,8 @@ pub fn fhir_appointment_to_row(
     let end_dt = parse_local_datetime(end, tz)?;
 
     row.appointment_date = Some(start_dt.date_naive().format("%Y-%m-%d").to_string());
-    row.start_time = Some(start_dt.time().format("%H:%M:%S").to_string());
-    row.end_time = Some(end_dt.time().format("%H:%M:%S").to_string());
+    row.start_time = Some(start_dt.time().format("%H:%M:%S%.f").to_string());
+    row.end_time = Some(end_dt.time().format("%H:%M:%S%.f").to_string());
 
     let status = appointment
         .get("status")

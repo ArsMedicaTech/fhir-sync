@@ -671,12 +671,12 @@ fn encounter_period(
                 let naive = NaiveDateTime::new(
                     NaiveDate::parse_from_str(date, "%Y-%m-%d")
                         .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid observation_date '{date}': {e}")))?,
-                    NaiveTime::parse_from_str(time, "%H:%M:%S")
+                    NaiveTime::parse_from_str(time, "%H:%M:%S%.f")
                         .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid observation time '{time}': {e}")))?,
                 );
                 let end_naive = naive + chrono::Duration::minutes((h * 60 + m).into());
                 let end_date = end_naive.format("%Y-%m-%d").to_string();
-                let end_time = end_naive.format("%H:%M:%S").to_string();
+                let end_time = end_naive.format("%H:%M:%S%.f").to_string();
                 Some(to_appointment_instant_rfc3339(&end_date, &end_time, oscar_cfg)?)
             } else {
                 None
