@@ -2121,6 +2121,7 @@ mod tests {
             dispatch: DispatchConfig::default(),
             oscar_enabled: true,
             oscar: OscarConfig::default(),
+            writeback: WritebackConfig::default(),
             debug: None,
         };
 
