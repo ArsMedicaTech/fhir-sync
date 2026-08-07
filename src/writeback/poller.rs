@@ -168,6 +168,20 @@ async fn poll_one_cycle(
                 continue;
             }
 
+            let key = format!("{}/{}", event.resource_type, event.id);
+            if checkpoint
+                .last_versionids_seen
+                .get(&key)
+                .map(|v| v == &event.version_id)
+                .unwrap_or(false)
+            {
+                info!(
+                    "writeback: skipping already-processed {} {} version {}",
+                    event.resource_type, event.id, event.version_id
+                );
+                continue;
+            }
+
             match event.op {
                 HistoryOp::Delete => {
                     warn!(
@@ -198,6 +212,9 @@ async fn poll_one_cycle(
             } else {
                 tx.commit().await?;
                 info!("writeback: committed {}/{}" , event.resource_type, event.id);
+                checkpoint
+                    .last_versionids_seen
+                    .insert(key, event.version_id.clone());
             }
 
             checkpoint.since = event.last_updated.clone();
