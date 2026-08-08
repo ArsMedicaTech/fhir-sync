@@ -34,7 +34,7 @@ pub fn fhir_appointment_to_row(
     tz: &Tz,
 ) -> Result<(Option<String>, AppointmentRow), MappingError> {
     let mut row = AppointmentRow::default();
-    row.booking_source = Some("amt".to_string());
+    row.booking_source = Some("online".to_string());
 
     let appointment_no = appointment
         .get("identifier")
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(row.end_time, Some("09:15:00".to_string()));
         assert_eq!(row.status, Some("t".to_string()));
         assert_eq!(row.reason, Some("Follow-up".to_string()));
-        assert_eq!(row.booking_source, Some("amt".to_string()));
+        assert_eq!(row.booking_source, Some("online".to_string()));
     }
 
     #[test]
