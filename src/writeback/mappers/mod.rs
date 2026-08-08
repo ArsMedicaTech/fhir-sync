@@ -10,6 +10,7 @@ pub mod service_request;
 pub use appointment::{AppointmentRow, fhir_appointment_to_row};
 pub use note::{NoteRow, fhir_document_reference_to_row};
 pub use patient::{DemographicRow, fhir_patient_to_row};
+pub use service_request::{ConsultationRequestRow, fhir_service_request_to_row};
 
 use std::fmt;
 
@@ -23,6 +24,7 @@ pub enum MappingError {
     InvalidValue { field: String, value: String },
     PlaceholderPatient,
     MergeTombstone,
+    NoDemographic,
 }
 
 impl fmt::Display for MappingError {
@@ -43,6 +45,9 @@ impl fmt::Display for MappingError {
             }
             MappingError::MergeTombstone => {
                 write!(f, "patient has a link element (merge tombstone)")
+            }
+            MappingError::NoDemographic => {
+                write!(f, "no_demographic")
             }
         }
     }

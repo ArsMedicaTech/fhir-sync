@@ -27,7 +27,8 @@ use crate::config::{Config, FhirConfig};
 use crate::writeback::authorship::{is_oscar_origin, is_writeback_source, WRITE_BACK_SOURCE};
 use crate::writeback::deadletter::{write as write_dead_letter, DeadLetter};
 use crate::writeback::mappers::{
-    fhir_appointment_to_row, fhir_document_reference_to_row, fhir_patient_to_row, MappingError,
+    fhir_appointment_to_row, fhir_document_reference_to_row, fhir_patient_to_row,
+    fhir_service_request_to_row, MappingError,
 };
 use crate::writeback::oscar_sink::{OscarSink, OscarTx};
 
@@ -346,6 +347,38 @@ async fn process_resource(
                 hapi_update_identifier(client, cfg, token, event, &new_id).await?;
             }
         }
+        "ServiceRequest" => {
+            let (existing_id, row) = fhir_service_request_to_row(
+                &event.resource,
+                &cfg.fhir.oscar_demographic_system,
+                &cfg.fhir.oscar_provider_system,
+                &cfg.fhir.oscar_consult_request_system,
+                &cfg.writeback.consult_service_map,
+                &cfg.writeback.default_consult_provider_no,
+                tz,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let new_id = tx
+                .write_consultation_request(existing_id.as_deref(), &row, tz)
+                .await?;
+            let source_node = event
+                .resource
+                .get("meta")
+                .and_then(|m| m.get("source"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if let Some(placer) = &row.placer_order_id {
+                tx.upsert_consultation_request_ext(&new_id, "amt.placerOrderId", placer)
+                    .await?;
+            }
+            tx.upsert_consultation_request_ext(&new_id, "amt.fhirServiceRequestId", &event.id)
+                .await?;
+            tx.upsert_consultation_request_ext(&new_id, "amt.sourceNode", source_node)
+                .await?;
+            if existing_id.is_none() {
+                hapi_update_identifier(client, cfg, token, event, &new_id).await?;
+            }
+        }
         "Encounter" => {
             info!(
                 "writeback: skipping Encounter {} (handled via DocumentReference)",
@@ -370,6 +403,7 @@ async fn hapi_update_identifier(
         "Patient" => &cfg.fhir.oscar_demographic_system,
         "Appointment" => &cfg.fhir.oscar_appointment_system,
         "DocumentReference" => &cfg.fhir.oscar_note_document_system,
+        "ServiceRequest" => &cfg.fhir.oscar_consult_request_system,
         other => anyhow::bail!("cannot write Oscar identifier for resource type {other}"),
     };
 

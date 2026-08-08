@@ -151,6 +151,17 @@ pub struct WritebackConfig {
     /// Example: cancelled → "C".
     #[serde(default)]
     pub appointment_status_map: HashMap<String, String>,
+    /// Fallback `providerNo` for `consultationRequests` when the FHIR
+    /// `requester` reference does not resolve to an Oscar provider.
+    #[serde(default)]
+    pub default_consult_provider_no: Option<String>,
+    /// FHIR `ServiceRequest.code` text (lowercased) → Oscar `serviceId`.
+    #[serde(default)]
+    pub consult_service_map: HashMap<String, String>,
+    /// Oscar `consultationRequests.status` → FHIR `Task.status`.
+    /// Reserved for Phase 3; unused in Phase 1.
+    #[serde(default)]
+    pub consult_status_map: HashMap<String, String>,
     #[serde(default)]
     pub db: WritebackDatabaseConfig,
 }
@@ -168,6 +179,9 @@ impl Default for WritebackConfig {
             sentinel_update_user: default_sentinel_update_user(),
             hapi_resource_types: default_hapi_resource_types(),
             appointment_status_map: HashMap::new(),
+            default_consult_provider_no: None,
+            consult_service_map: HashMap::new(),
+            consult_status_map: HashMap::new(),
             db: WritebackDatabaseConfig::default(),
         }
     }
@@ -243,6 +257,8 @@ pub struct FhirConfig {
     pub oscar_provider_system: String,
     #[serde(default = "default_oscar_appointment_system")]
     pub oscar_appointment_system: String,
+    #[serde(default = "default_oscar_consult_request_system")]
+    pub oscar_consult_request_system: String,
     #[serde(default = "default_oscar_care_team_system")]
     pub oscar_care_team_system: String,
     #[serde(default = "default_oscar_note_system")]
@@ -275,6 +291,7 @@ impl Default for FhirConfig {
             oscar_demographic_system: default_oscar_demographic_system(),
             oscar_provider_system: default_oscar_provider_system(),
             oscar_appointment_system: default_oscar_appointment_system(),
+            oscar_consult_request_system: default_oscar_consult_request_system(),
             oscar_care_team_system: default_oscar_care_team_system(),
             oscar_note_system: default_oscar_note_system(),
             oscar_note_revision_system: default_oscar_note_revision_system(),
@@ -305,6 +322,10 @@ fn default_oscar_provider_system() -> String {
 
 fn default_oscar_appointment_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string()
+}
+
+fn default_oscar_consult_request_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-consult-request".to_string()
 }
 
 fn default_oscar_care_team_system() -> String {
