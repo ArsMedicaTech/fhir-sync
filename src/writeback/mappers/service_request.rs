@@ -35,11 +35,11 @@ pub struct ConsultationRequestRow {
 /// means UPDATE.
 pub fn fhir_service_request_to_row(
     service_request: &Value,
-    oscar_demographic_system: &str,
-    oscar_provider_system: &str,
     oscar_consult_request_system: &str,
     consult_service_map: &HashMap<String, String>,
     default_consult_provider_no: &Option<String>,
+    demographic_no: Option<String>,
+    provider_no: Option<String>,
     tz: &Tz,
 ) -> Result<(Option<String>, ConsultationRequestRow), MappingError> {
     let mut row = ConsultationRequestRow::default();
@@ -47,22 +47,13 @@ pub fn fhir_service_request_to_row(
     let request_id = identifier_value(service_request, oscar_consult_request_system);
     row.placer_order_id = identifier_value(service_request, PLACER_ORDER_SYSTEM);
 
-    let subject = service_request
-        .get("subject")
-        .ok_or_else(|| MappingError::MissingField("subject".to_string()))?;
-    let demographic_no = reference_identifier(subject, oscar_demographic_system)
-        .ok_or(MappingError::NoDemographic)?;
+    let demographic_no = demographic_no.ok_or(MappingError::NoDemographic)?;
     if demographic_no == "0" {
         return Err(MappingError::PlaceholderPatient);
     }
     row.demographic_no = Some(demographic_no);
 
-    if let Some(requester) = service_request.get("requester") {
-        row.provider_no = reference_identifier(requester, oscar_provider_system)
-            .or_else(|| default_consult_provider_no.clone());
-    } else {
-        row.provider_no = default_consult_provider_no.clone();
-    }
+    row.provider_no = provider_no.or_else(|| default_consult_provider_no.clone());
     if row.provider_no.is_none() {
         return Err(MappingError::MissingField("provider_no".to_string()));
     }
@@ -179,37 +170,4 @@ fn identifier_value(resource: &Value, system: &str) -> Option<String> {
         .map(String::from)
 }
 
-fn reference_identifier(reference: &Value, system: &str) -> Option<String> {
-    if let Some(id) = reference.get("identifier") {
-        if let Some(arr) = id.as_array() {
-            if let Some(v) = arr
-                .iter()
-                .find(|i| i.get("system").and_then(Value::as_str) == Some(system))
-                .and_then(|i| i.get("value").and_then(Value::as_str))
-            {
-                return Some(v.to_string());
-            }
-        }
-        if id.is_object() {
-            if id.get("system").and_then(Value::as_str) == Some(system) {
-                return id.get("value").and_then(Value::as_str).map(String::from);
-            }
-        }
-    }
 
-    if let Some(reference_str) = reference.get("reference").and_then(Value::as_str) {
-        if let Some(query) = reference_str.split('?').nth(1) {
-            for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
-                if k == "identifier" {
-                    if let Some((sys, val)) = v.split_once('|') {
-                        if sys == system {
-                            return Some(val.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
