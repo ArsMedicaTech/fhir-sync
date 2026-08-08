@@ -3,20 +3,22 @@ use base64ct::{Base64, Encoding};
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use fhirbolt::model::r4b::resources::{
     Bundle, BundleEntry, BundleEntryRequest, Condition, ConditionAbatement, ConditionOnset,
-    DocumentReference, DocumentReferenceContent, DocumentReferenceContext, Encounter,
-    EncounterParticipant, FamilyMemberHistory, FamilyMemberHistoryCondition,
-    FamilyMemberHistoryConditionOnset,
+    DiagnosticReport, DiagnosticReportEffective, DocumentReference, DocumentReferenceContent,
+    DocumentReferenceContext, Encounter, EncounterParticipant, FamilyMemberHistory,
+    FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset,
 };
 use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
-    Age, Annotation, Attachment, CodeableConcept, Coding, Identifier, Meta, Period, Reference,
+    Age, Annotation, Attachment, CodeableConcept, Coding, DateTime, Identifier, Meta, Period,
+    Reference,
 };
 use tracing::{info, warn};
 
 use crate::domain::condition::{DomainCondition, DomainFamilyMemberHistory};
+use crate::domain::diagnostic_report::DomainDiagnosticReport;
 use crate::domain::document_reference::DomainDocumentReference;
 use crate::domain::encounter::DomainEncounter;
-use crate::event::ResourceType;
+use crate::event::{Op, ResourceType};
 
 use super::{FhirConfig, FhirResult, OscarConfig, SyncEvent, SyncFailure, parse_location_id, parse_location_version_id, META_SOURCE};
 
@@ -118,6 +120,29 @@ pub(super) async fn sync_family_member_history(
     );
     let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
     let identifier = format!("{}|{}", fhir_cfg.oscar_cpp_condition_system, event.payload().source_id());
+    info!(
+        "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
+        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+    );
+    Ok(result)
+}
+
+pub(super) async fn sync_diagnostic_report(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    report: &DomainDiagnosticReport,
+    oscar_cfg: &OscarConfig,
+) -> Result<FhirResult, SyncFailure> {
+    let fhir_report = build_diagnostic_report(report, fhir_cfg, oscar_cfg, event.op())?;
+    let bundle = build_conditional_put_bundle(
+        FhirResource::DiagnosticReport(Box::new(fhir_report)),
+        &fhir_cfg.oscar_consult_response_system,
+        event,
+    );
+    let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
+    let identifier = format!("{}|{}", fhir_cfg.oscar_consult_response_system, event.payload().source_id());
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
         event.idempotency_key(), identifier, result.fhir_id, result.version_id
@@ -631,6 +656,113 @@ fn build_family_member_history(
     }
 
     Ok(f)
+}
+
+fn build_diagnostic_report(
+    report: &DomainDiagnosticReport,
+    fhir_cfg: &FhirConfig,
+    oscar_cfg: &OscarConfig,
+    op: Op,
+) -> Result<DiagnosticReport, SyncFailure> {
+    let mut dr = DiagnosticReport::default();
+
+    dr.meta = Some(Box::new(Meta {
+        source: Some(META_SOURCE.into()),
+        ..Default::default()
+    }));
+
+    dr.identifier.push(Identifier {
+        system: Some(fhir_cfg.oscar_consult_response_system.clone().into()),
+        value: Some(report.response_id.clone().into()),
+        ..Default::default()
+    });
+
+    let raw_status = report.status.as_deref();
+
+    let fhir_status = if op == Op::Delete {
+        "entered-in-error"
+    } else {
+        match raw_status {
+            Some(code) => oscar_cfg
+                .consult_response_status_map
+                .get(code)
+                .map(String::as_str)
+                .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("unmapped consult response status: {code}")))?,
+            None => {
+                return Err(SyncFailure::Permanent(anyhow::anyhow!(
+                    "response_id={} has no status",
+                    report.response_id
+                )));
+            }
+        }
+    };
+    dr.status = fhir_status.into();
+
+    let code_text = report
+        .referral_reason
+        .clone()
+        .unwrap_or_else(|| "Consultation response".to_string());
+    dr.code = Box::new(CodeableConcept {
+        text: Some(code_text.into()),
+        ..Default::default()
+    });
+
+    let based_on = report
+        .based_on
+        .as_ref()
+        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!(
+            "response_id={} has no originating ServiceRequest",
+            report.response_id
+        )))?;
+    dr.based_on.push(Reference {
+        reference: Some(based_on.clone().into()),
+        ..Default::default()
+    });
+
+    let demo_sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes()).collect();
+    let demo_val: String =
+        url::form_urlencoded::byte_serialize(report.demographic_no.as_bytes()).collect();
+    dr.subject = Some(Box::new(Reference {
+        reference: Some(format!("Patient?identifier={demo_sys}|{demo_val}").into()),
+        ..Default::default()
+    }));
+
+    if let Some(provider_no) = &report.provider_no {
+        let prov_sys: String =
+            url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
+        let prov_val: String =
+            url::form_urlencoded::byte_serialize(provider_no.as_bytes()).collect();
+        dr.performer.push(Reference {
+            reference: Some(format!("Practitioner?identifier={prov_sys}|{prov_val}").into()),
+            ..Default::default()
+        });
+    }
+
+    if let Some(response_date) = &report.response_date {
+        let effective = response_date.replace(' ', "T");
+        dr.effective = Some(DiagnosticReportEffective::DateTime(effective.into()));
+    }
+
+    if let Some(impression) = &report.impression {
+        dr.conclusion = Some(impression.clone().into());
+    }
+
+    if let Some(examination) = &report.examination {
+        dr.note.push(Annotation {
+            text: format!("Examination: {}", examination).into(),
+            ..Default::default()
+        });
+    }
+
+    if let Some(plan) = &report.plan {
+        dr.note.push(Annotation {
+            text: format!("Plan: {}", plan).into(),
+            ..Default::default()
+        });
+    }
+
+    Ok(dr)
 }
 
 // ---------------------------------------------------------------------------
