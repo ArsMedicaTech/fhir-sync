@@ -53,6 +53,11 @@ pub struct OscarConfig {
     /// Master switch for the Oscar → FHIR CareTeam sync.
     #[serde(default = "default_true")]
     pub care_team_enabled: bool,
+    /// Oscar `consultationResponse.status` → FHIR `DiagnosticReport.status`.
+    /// Shipped empty intentionally; unmapped statuses dead-letter rather than
+    /// defaulting.
+    #[serde(default = "default_consult_response_status_map")]
+    pub consult_response_status_map: HashMap<String, String>,
 }
 
 impl Default for OscarConfig {
@@ -63,6 +68,7 @@ impl Default for OscarConfig {
             appointment_status_map: default_appointment_status_map(),
             default_mrp_provider_no: None,
             care_team_enabled: true,
+            consult_response_status_map: default_consult_response_status_map(),
         }
     }
 }
@@ -79,6 +85,10 @@ fn default_appointment_status_map() -> HashMap<String, String> {
     m.insert("C".to_string(), "cancelled".to_string());
     m.insert("N".to_string(), "noshow".to_string());
     m
+}
+
+fn default_consult_response_status_map() -> HashMap<String, String> {
+    HashMap::new()
 }
 
 fn default_sentinel_update_user() -> String {
@@ -278,6 +288,8 @@ pub struct FhirConfig {
     pub msp_service_code_system: String,
     #[serde(default = "default_oscar_dxresearch_system")]
     pub oscar_dxresearch_system: String,
+    #[serde(default = "default_oscar_consult_response_system")]
+    pub oscar_consult_response_system: String,
     #[serde(default = "default_oscar_cpp_condition_system")]
     pub oscar_cpp_condition_system: String,
     #[serde(default = "default_icd9_system")]
@@ -305,6 +317,7 @@ impl Default for FhirConfig {
             oscar_note_document_system: default_oscar_note_document_system(),
             msp_service_code_system: default_msp_service_code_system(),
             oscar_dxresearch_system: default_oscar_dxresearch_system(),
+            oscar_consult_response_system: default_oscar_consult_response_system(),
             oscar_cpp_condition_system: default_oscar_cpp_condition_system(),
             icd9_system: default_icd9_system(),
             bc_phn_system: default_bc_phn_system(),
@@ -357,6 +370,10 @@ fn default_msp_service_code_system() -> String {
 
 fn default_oscar_dxresearch_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-dxresearch".to_string()
+}
+
+fn default_oscar_consult_response_system() -> String {
+    "https://arsmedicatech.com/fhir/sid/oscar-consult-response".to_string()
 }
 
 fn default_oscar_cpp_condition_system() -> String {
