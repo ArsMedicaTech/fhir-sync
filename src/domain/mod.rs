@@ -1,6 +1,7 @@
 pub mod appointment;
 pub mod care_team;
 pub mod condition;
+pub mod diagnostic_report;
 pub mod document_reference;
 pub mod encounter;
 pub mod patient;
