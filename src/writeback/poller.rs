@@ -318,10 +318,44 @@ async fn process_resource(
             }
         }
         "Appointment" => {
+            let mut demographic_no: Option<String> = None;
+            let mut provider_no: Option<String> = None;
+            if let Some(parts) = event.resource.get("participant").and_then(Value::as_array) {
+                for p in parts {
+                    if let Some(actor_ref) = p
+                        .get("actor")
+                        .and_then(|v| v.get("reference"))
+                        .and_then(Value::as_str)
+                    {
+                        if demographic_no.is_none() {
+                            demographic_no = resolve_identifier(
+                                client,
+                                cfg,
+                                token,
+                                actor_ref,
+                                &cfg.fhir.oscar_demographic_system,
+                            )
+                            .await
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        }
+                        if provider_no.is_none() {
+                            provider_no = resolve_identifier(
+                                client,
+                                cfg,
+                                token,
+                                actor_ref,
+                                &cfg.fhir.oscar_provider_system,
+                            )
+                            .await
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        }
+                    }
+                }
+            }
             let (existing_id, row) = fhir_appointment_to_row(
                 &event.resource,
-                &cfg.fhir.oscar_demographic_system,
-                &cfg.fhir.oscar_provider_system,
+                demographic_no,
+                provider_no,
                 &cfg.fhir.oscar_appointment_system,
                 &cfg.writeback.appointment_status_map,
                 tz,
@@ -333,12 +367,69 @@ async fn process_resource(
             }
         }
         "DocumentReference" => {
+            let subject_ref = event
+                .resource
+                .get("subject")
+                .and_then(|v| v.get("reference"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("missing subject reference"))?;
+            let demographic_no = resolve_identifier(
+                client,
+                cfg,
+                token,
+                subject_ref,
+                &cfg.fhir.oscar_demographic_system,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let author_ref = event
+                .resource
+                .get("author")
+                .and_then(Value::as_array)
+                .and_then(|a| a.first())
+                .and_then(|v| v.get("reference"))
+                .and_then(Value::as_str);
+            let provider_no = if let Some(r) = author_ref {
+                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_provider_system)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                None
+            };
+            let authenticator_ref = event
+                .resource
+                .get("authenticator")
+                .and_then(|v| v.get("reference"))
+                .and_then(Value::as_str);
+            let signing_provider_no = if let Some(r) = authenticator_ref {
+                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_provider_system)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                None
+            };
+            let encounter_ref = event
+                .resource
+                .get("context")
+                .and_then(|c| c.get("encounter"))
+                .and_then(Value::as_array)
+                .and_then(|a| a.first())
+                .and_then(|v| v.get("reference"))
+                .and_then(Value::as_str);
+            let appointment_no = if let Some(r) = encounter_ref {
+                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_appointment_system)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                None
+            };
             let (existing_id, row) = fhir_document_reference_to_row(
                 &event.resource,
                 &cfg.fhir.oscar_note_document_system,
-                &cfg.fhir.oscar_demographic_system,
-                &cfg.fhir.oscar_provider_system,
-                &cfg.fhir.oscar_appointment_system,
+                demographic_no,
+                provider_no,
+                signing_provider_no,
+                appointment_no,
                 tz,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -348,13 +439,40 @@ async fn process_resource(
             }
         }
         "ServiceRequest" => {
+            let subject_ref = event
+                .resource
+                .get("subject")
+                .and_then(|v| v.get("reference"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("missing subject reference"))?;
+            let demographic_no = resolve_identifier(
+                client,
+                cfg,
+                token,
+                subject_ref,
+                &cfg.fhir.oscar_demographic_system,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let requester_ref = event
+                .resource
+                .get("requester")
+                .and_then(|v| v.get("reference"))
+                .and_then(Value::as_str);
+            let provider_no = if let Some(r) = requester_ref {
+                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_provider_system)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                None
+            };
             let (existing_id, row) = fhir_service_request_to_row(
                 &event.resource,
-                &cfg.fhir.oscar_demographic_system,
-                &cfg.fhir.oscar_provider_system,
                 &cfg.fhir.oscar_consult_request_system,
                 &cfg.writeback.consult_service_map,
                 &cfg.writeback.default_consult_provider_no,
+                demographic_no,
+                provider_no,
                 tz,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -460,6 +578,72 @@ fn set_identifier(resource: &mut Value, system: &str, value: &str) {
 
 fn set_meta_source(resource: &mut Value, source: &str) {
     resource["meta"] = json!({"source": source});
+}
+
+fn identifier_value(resource: &Value, system: &str) -> Option<String> {
+    resource
+        .get("identifier")
+        .and_then(Value::as_array)
+        .and_then(|ids| {
+            ids.iter()
+                .find(|i| i.get("system").and_then(Value::as_str) == Some(system))
+                .and_then(|i| i.get("value").and_then(Value::as_str))
+        })
+        .map(String::from)
+}
+
+/// Fetches a referenced resource from HAPI and returns the value of the
+/// identifier matching `system`, if present. Returns `Ok(None)` when the
+/// resource exists but has no matching identifier (a legitimate "not linked
+/// to this EMR" state — not an error). Returns `Err` only for transport/HTTP
+/// failures or a 404 (the reference itself is broken).
+async fn resolve_identifier(
+    client: &Client,
+    cfg: &Config,
+    token: Option<&str>,
+    reference: &str,
+    system: &str,
+) -> std::result::Result<Option<String>, MappingError> {
+    let (resource_type, id) = reference
+        .split_once('/')
+        .ok_or_else(|| MappingError::ReferenceNotFound {
+            reference: reference.to_string(),
+        })?;
+    if id.is_empty() {
+        return Err(MappingError::ReferenceNotFound {
+            reference: reference.to_string(),
+        });
+    }
+    let url = format!(
+        "{}/{}/{}",
+        cfg.fhir.base_url.trim_end_matches('/'),
+        resource_type,
+        id
+    );
+    let mut req = client.get(&url).header("Accept", "application/fhir+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await.map_err(|e| MappingError::ReferenceFetchFailed {
+        reference: reference.to_string(),
+        detail: e.to_string(),
+    })?;
+    if resp.status() == 404 {
+        return Err(MappingError::ReferenceNotFound {
+            reference: reference.to_string(),
+        });
+    }
+    if !resp.status().is_success() {
+        return Err(MappingError::ReferenceFetchFailed {
+            reference: reference.to_string(),
+            detail: resp.status().to_string(),
+        });
+    }
+    let resource: Value = resp.json().await.map_err(|e| MappingError::ReferenceFetchFailed {
+        reference: reference.to_string(),
+        detail: e.to_string(),
+    })?;
+    Ok(identifier_value(&resource, system))
 }
 
 async fn load_checkpoint(path: &str) -> WritebackCheckpoint {

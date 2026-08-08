@@ -25,6 +25,8 @@ pub enum MappingError {
     PlaceholderPatient,
     MergeTombstone,
     NoDemographic,
+    ReferenceNotFound { reference: String },
+    ReferenceFetchFailed { reference: String, detail: String },
 }
 
 impl fmt::Display for MappingError {
@@ -48,6 +50,12 @@ impl fmt::Display for MappingError {
             }
             MappingError::NoDemographic => {
                 write!(f, "no_demographic")
+            }
+            MappingError::ReferenceNotFound { reference } => {
+                write!(f, "reference_not_found: {reference}")
+            }
+            MappingError::ReferenceFetchFailed { reference, detail } => {
+                write!(f, "reference_fetch_failed: {reference}: {detail}")
             }
         }
     }

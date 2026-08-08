@@ -27,8 +27,8 @@ pub struct AppointmentRow {
 /// identifier means INSERT.
 pub fn fhir_appointment_to_row(
     appointment: &Value,
-    oscar_demographic_system: &str,
-    oscar_provider_system: &str,
+    demographic_no: Option<String>,
+    provider_no: Option<String>,
     oscar_appointment_system: &str,
     status_map: &HashMap<String, String>,
     tz: &Tz,
@@ -36,15 +36,22 @@ pub fn fhir_appointment_to_row(
     let mut row = AppointmentRow::default();
     row.booking_source = Some("amt".to_string());
 
-    let appointment_no = identifier_value(appointment, oscar_appointment_system);
+    let appointment_no = appointment
+        .get("identifier")
+        .and_then(Value::as_array)
+        .and_then(|ids| {
+            ids.iter()
+                .find(|i| {
+                    i.get("system").and_then(Value::as_str) == Some(oscar_appointment_system)
+                })
+                .and_then(|i| i.get("value").and_then(Value::as_str))
+        })
+        .map(String::from);
 
-    let demographic_no = participant_identifier_value(appointment, oscar_demographic_system)
-        .ok_or_else(|| MappingError::MissingField("demographic_no".to_string()))?;
+    let demographic_no = demographic_no.ok_or(MappingError::NoDemographic)?;
     if demographic_no == "0" {
         return Err(MappingError::PlaceholderPatient);
     }
-
-    let provider_no = participant_identifier_value(appointment, oscar_provider_system);
 
     let start = appointment
         .get("start")
@@ -80,32 +87,7 @@ pub fn fhir_appointment_to_row(
     Ok((appointment_no, row))
 }
 
-fn identifier_value(resource: &Value, system: &str) -> Option<String> {
-    let id = resource.get("identifier")?;
-    if let Some(arr) = id.as_array() {
-        return arr
-            .iter()
-            .find(|i| i.get("system").and_then(Value::as_str) == Some(system))
-            .and_then(|i| i.get("value").and_then(Value::as_str))
-            .map(String::from);
-    }
-    if id.get("system").and_then(Value::as_str) == Some(system) {
-        return id.get("value").and_then(Value::as_str).map(String::from);
-    }
-    None
-}
 
-fn participant_identifier_value(resource: &Value, system: &str) -> Option<String> {
-    resource
-        .get("participant")
-        .and_then(Value::as_array)
-        .and_then(|parts| {
-            parts
-                .iter()
-                .filter_map(|p| p.get("actor"))
-                .find_map(|actor| identifier_value(actor, system))
-        })
-}
 
 fn reason_text(appointment: &Value) -> Option<String> {
     let from_reason_code = appointment
@@ -193,8 +175,8 @@ mod tests {
     fn maps_full_appointment() {
         let (id, row) = fhir_appointment_to_row(
             &appt("2026-08-10T09:00:00", "2026-08-10T09:15:00"),
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            Some("101".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),
@@ -215,8 +197,8 @@ mod tests {
     fn handles_offset_datetime() {
         let (id, row) = fhir_appointment_to_row(
             &appt("2026-08-10T09:00:00-07:00", "2026-08-10T09:15:00-07:00"),
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            Some("101".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),
@@ -231,8 +213,8 @@ mod tests {
     fn spring_forward_gap_dead_letters() {
         let err = fhir_appointment_to_row(
             &appt("2026-03-08T02:30:00", "2026-03-08T03:00:00"),
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            Some("101".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),
@@ -248,8 +230,8 @@ mod tests {
     fn fall_back_ambiguous_resolves_to_first() {
         let (id, row) = fhir_appointment_to_row(
             &appt("2026-11-01T01:30:00", "2026-11-01T01:45:00"),
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            Some("101".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),
@@ -263,12 +245,10 @@ mod tests {
 
     #[test]
     fn demographic_zero_is_rejected() {
-        let mut a = appt("2026-08-10T09:00:00", "2026-08-10T09:15:00");
-        a["participant"][0]["actor"]["identifier"]["value"] = "0".into();
         let err = fhir_appointment_to_row(
-            &a,
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            &appt("2026-08-10T09:00:00", "2026-08-10T09:15:00"),
+            Some("0".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),
@@ -283,8 +263,8 @@ mod tests {
         a["status"] = "proposed".into();
         let err = fhir_appointment_to_row(
             &a,
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            Some("101".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),
@@ -302,8 +282,8 @@ mod tests {
         a.as_object_mut().unwrap().remove("identifier");
         let (id, row) = fhir_appointment_to_row(
             &a,
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
+            Some("101".to_string()),
+            Some("100001".to_string()),
             "https://arsmedicatech.com/fhir/sid/oscar-appointment",
             &status_map(),
             &vancouver(),

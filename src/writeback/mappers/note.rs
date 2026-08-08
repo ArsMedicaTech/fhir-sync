@@ -33,32 +33,23 @@ pub struct NoteRow {
 pub fn fhir_document_reference_to_row(
     doc_ref: &Value,
     oscar_note_document_system: &str,
-    oscar_demographic_system: &str,
-    oscar_provider_system: &str,
-    oscar_appointment_system: &str,
+    demographic_no: Option<String>,
+    provider_no: Option<String>,
+    signing_provider_no: Option<String>,
+    appointment_no: Option<String>,
     tz: &Tz,
 ) -> Result<(Option<String>, NoteRow), MappingError> {
     let mut row = NoteRow::default();
 
     let uuid = identifier_value(doc_ref, oscar_note_document_system);
 
-    let subject = doc_ref.get("subject").ok_or_else(|| MappingError::MissingField("subject".to_string()))?;
-    let demographic_no = reference_identifier(subject, oscar_demographic_system)
-        .ok_or_else(|| MappingError::MissingField("demographic_no".to_string()))?;
+    let demographic_no = demographic_no.ok_or(MappingError::NoDemographic)?;
     if demographic_no == "0" {
         return Err(MappingError::PlaceholderPatient);
     }
     row.demographic_no = Some(demographic_no);
-
-    if let Some(authors) = doc_ref.get("author").and_then(Value::as_array) {
-        if let Some(author) = authors.first() {
-            row.provider_no = reference_identifier(author, oscar_provider_system);
-        }
-    }
-
-    if let Some(authenticator) = doc_ref.get("authenticator") {
-        row.signing_provider_no = reference_identifier(authenticator, oscar_provider_system);
-    }
+    row.provider_no = provider_no;
+    row.signing_provider_no = signing_provider_no;
 
     match doc_ref.get("docStatus").and_then(Value::as_str) {
         Some("final") => row.signed = true,
@@ -103,15 +94,7 @@ pub fn fhir_document_reference_to_row(
         value: "not utf-8".to_string(),
     })?);
 
-    if let Some(encounters) = doc_ref
-        .get("context")
-        .and_then(|c| c.get("encounter"))
-        .and_then(Value::as_array)
-    {
-        if let Some(enc) = encounters.first() {
-            row.appointment_no = reference_identifier(enc, oscar_appointment_system);
-        }
-    }
+    row.appointment_no = appointment_no;
 
     Ok((uuid, row))
 }
@@ -126,41 +109,6 @@ fn identifier_value(resource: &Value, system: &str) -> Option<String> {
                 .and_then(|i| i.get("value").and_then(Value::as_str))
         })
         .map(String::from)
-}
-
-fn reference_identifier(reference: &Value, system: &str) -> Option<String> {
-    if let Some(id) = reference.get("identifier") {
-        if let Some(arr) = id.as_array() {
-            if let Some(v) = arr
-                .iter()
-                .find(|i| i.get("system").and_then(Value::as_str) == Some(system))
-                .and_then(|i| i.get("value").and_then(Value::as_str))
-            {
-                return Some(v.to_string());
-            }
-        }
-        if id.is_object() {
-            if id.get("system").and_then(Value::as_str) == Some(system) {
-                return id.get("value").and_then(Value::as_str).map(String::from);
-            }
-        }
-    }
-
-    if let Some(reference_str) = reference.get("reference").and_then(Value::as_str) {
-        if let Some(query) = reference_str.split('?').nth(1) {
-            for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
-                if k == "identifier" {
-                    if let Some((sys, val)) = v.split_once('|') {
-                        if sys == system {
-                            return Some(val.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
 }
 
 fn parse_instant_to_local(s: &str, tz: &Tz) -> Result<String, MappingError> {
@@ -219,9 +167,10 @@ mod tests {
         let (uuid, row) = fhir_document_reference_to_row(
             &doc_ref(),
             "https://arsmedicatech.com/fhir/sid/oscar-note-document",
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
-            "https://arsmedicatech.com/fhir/sid/oscar-appointment",
+            Some("101".to_string()),
+            Some("100001".to_string()),
+            Some("100003".to_string()),
+            Some("5".to_string()),
             &vancouver(),
         )
         .unwrap();
@@ -244,9 +193,10 @@ mod tests {
         let (_, row) = fhir_document_reference_to_row(
             &d,
             "https://arsmedicatech.com/fhir/sid/oscar-note-document",
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
-            "https://arsmedicatech.com/fhir/sid/oscar-appointment",
+            Some("101".to_string()),
+            Some("100001".to_string()),
+            Some("100003".to_string()),
+            Some("5".to_string()),
             &vancouver(),
         )
         .unwrap();
@@ -261,9 +211,10 @@ mod tests {
         let (_, row) = fhir_document_reference_to_row(
             &d,
             "https://arsmedicatech.com/fhir/sid/oscar-note-document",
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
-            "https://arsmedicatech.com/fhir/sid/oscar-appointment",
+            Some("101".to_string()),
+            Some("100001".to_string()),
+            Some("100003".to_string()),
+            Some("5".to_string()),
             &vancouver(),
         )
         .unwrap();
@@ -278,9 +229,10 @@ mod tests {
         let err = fhir_document_reference_to_row(
             &d,
             "https://arsmedicatech.com/fhir/sid/oscar-note-document",
-            "https://arsmedicatech.com/fhir/sid/oscar-demographic",
-            "https://arsmedicatech.com/fhir/sid/oscar-provider",
-            "https://arsmedicatech.com/fhir/sid/oscar-appointment",
+            Some("101".to_string()),
+            Some("100001".to_string()),
+            Some("100003".to_string()),
+            Some("5".to_string()),
             &vancouver(),
         )
         .unwrap_err();
