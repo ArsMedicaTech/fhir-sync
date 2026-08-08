@@ -2,6 +2,7 @@ pub mod appointment;
 pub mod care_team;
 pub mod casemgmt_note;
 pub mod casemgmt_note_ext;
+pub mod consultation_response;
 pub mod demographic;
 pub mod dxresearch;
 pub mod provider;
