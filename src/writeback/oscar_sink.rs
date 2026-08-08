@@ -79,7 +79,11 @@ impl OscarTx {
             let mut params: Vec<Value> = Vec::new();
             push_set(&mut sets, &mut params, "first_name", row.first_name.as_deref());
             push_set(&mut sets, &mut params, "last_name", row.last_name.as_deref());
-            push_set(&mut sets, &mut params, "middleNames", row.middle_names.as_deref());
+
+            // Special case for middle names
+            sets.push("middleNames=?".to_string());
+            params.push(Value::Bytes(row.middle_names.as_deref().unwrap_or("").as_bytes().to_vec()));
+            
             push_set(&mut sets, &mut params, "pref_name", row.pref_name.as_deref());
             push_set(&mut sets, &mut params, "title", row.title.as_deref());
             push_set(&mut sets, &mut params, "address", row.address.as_deref());
@@ -117,7 +121,11 @@ impl OscarTx {
             let mut params: Vec<Value> = Vec::new();
             push_col(&mut cols, &mut params, "first_name", row.first_name.as_deref());
             push_col(&mut cols, &mut params, "last_name", row.last_name.as_deref());
-            push_col(&mut cols, &mut params, "middleNames", row.middle_names.as_deref());
+            
+            // Special case for null middle names
+            cols.push("middleNames".to_string());
+            params.push(Value::Bytes(row.middle_names.as_deref().unwrap_or("").as_bytes().to_vec()));
+            
             push_col(&mut cols, &mut params, "pref_name", row.pref_name.as_deref());
             push_col(&mut cols, &mut params, "title", row.title.as_deref());
             push_col(&mut cols, &mut params, "address", row.address.as_deref());
