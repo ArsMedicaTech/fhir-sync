@@ -180,7 +180,7 @@ impl OscarTx {
             push_set(&mut sets, &mut params, "reason", row.reason.as_deref());
 
             sets.push("bookingSource=?".to_string());
-            params.push(Value::Bytes(b"online".to_vec()));
+            params.push(Value::Bytes(b"OSCAR".to_vec()));
             sets.push("lastupdateuser=?".to_string());
             params.push(Value::Bytes(self.sentinel.as_bytes().to_vec()));
 
@@ -207,7 +207,7 @@ impl OscarTx {
             push_col(&mut cols, &mut params, "reason", row.reason.as_deref());
 
             cols.push("bookingSource".to_string());
-            params.push(Value::Bytes(b"online".to_vec()));
+            params.push(Value::Bytes(b"OSCAR".to_vec()));
             cols.push("lastupdateuser".to_string());
             params.push(Value::Bytes(self.sentinel.as_bytes().to_vec()));
 

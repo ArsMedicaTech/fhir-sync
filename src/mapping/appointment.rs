@@ -116,7 +116,7 @@ mod tests {
                 Some("3"),
                 Some("2026-08-09 16:30:00"),
                 Some("Room A"),
-                Some("online"),
+                Some("OSCAR"),
                 Some("Regular"),
             ]),
             &cols,
@@ -136,7 +136,7 @@ mod tests {
         assert_eq!(a.urgency, Some("3".to_string()));
         assert_eq!(a.createdatetime, Some("2026-08-09 16:30:00".to_string()));
         assert_eq!(a.location, Some("Room A".to_string()));
-        assert_eq!(a.booking_source, Some("online".to_string()));
+        assert_eq!(a.booking_source, Some("OSCAR".to_string()));
         assert_eq!(a.type_, Some("Regular".to_string()));
     }
 

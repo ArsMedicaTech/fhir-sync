@@ -1624,7 +1624,7 @@ mod tests {
             urgency: Some("3".to_string()),
             createdatetime: Some("2026-08-09 16:30:00".to_string()),
             location: Some("Room A".to_string()),
-            booking_source: Some("online".to_string()),
+            booking_source: Some("OSCAR".to_string()),
             type_: Some("Regular".to_string()),
         }
     }
