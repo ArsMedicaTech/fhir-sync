@@ -27,6 +27,7 @@ pub enum MappingError {
     NoDemographic,
     ReferenceNotFound { reference: String },
     ReferenceFetchFailed { reference: String, detail: String },
+    NoProvider(String),
 }
 
 impl fmt::Display for MappingError {
@@ -56,6 +57,9 @@ impl fmt::Display for MappingError {
             }
             MappingError::ReferenceFetchFailed { reference, detail } => {
                 write!(f, "reference_fetch_failed: {reference}: {detail}")
+            }
+            MappingError::NoProvider(reference) => {
+                write!(f, "no provider for {reference}")
             }
         }
     }

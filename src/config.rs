@@ -162,6 +162,12 @@ pub struct WritebackConfig {
     /// Reserved for Phase 3; unused in Phase 1.
     #[serde(default)]
     pub consult_status_map: HashMap<String, String>,
+    /// AMT `Practitioner` FHIR id -> Oscar `providerNo`. Consulted only when
+    /// live identifier resolution (`resolve_identifier` against
+    /// `oscar_provider_system`) returns `None` for a given Practitioner
+    /// reference. See TASK_FEATURES_SPEC_PRACTITIONER_PROVIDER_MAP.md.
+    #[serde(default)]
+    pub practitioner_provider_map: HashMap<String, String>,
     #[serde(default)]
     pub db: WritebackDatabaseConfig,
 }
@@ -182,6 +188,7 @@ impl Default for WritebackConfig {
             default_consult_provider_no: None,
             consult_service_map: HashMap::new(),
             consult_status_map: HashMap::new(),
+            practitioner_provider_map: HashMap::new(),
             db: WritebackDatabaseConfig::default(),
         }
     }

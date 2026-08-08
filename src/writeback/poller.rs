@@ -338,16 +338,12 @@ async fn process_resource(
                             .await
                             .map_err(|e| anyhow::anyhow!("{e}"))?;
                         }
-                        if provider_no.is_none() {
-                            provider_no = resolve_identifier(
-                                client,
-                                cfg,
-                                token,
-                                actor_ref,
-                                &cfg.fhir.oscar_provider_system,
-                            )
-                            .await
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        if provider_no.is_none() && actor_ref.starts_with("Practitioner/") {
+                            provider_no = Some(
+                                resolve_provider_no(client, cfg, token, actor_ref)
+                                    .await
+                                    .map_err(|e| anyhow::anyhow!("{e}"))?,
+                            );
                         }
                     }
                 }
@@ -390,9 +386,7 @@ async fn process_resource(
                 .and_then(|v| v.get("reference"))
                 .and_then(Value::as_str);
             let provider_no = if let Some(r) = author_ref {
-                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_provider_system)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                Some(resolve_provider_no(client, cfg, token, r).await.map_err(|e| anyhow::anyhow!("{e}"))?)
             } else {
                 None
             };
@@ -402,9 +396,7 @@ async fn process_resource(
                 .and_then(|v| v.get("reference"))
                 .and_then(Value::as_str);
             let signing_provider_no = if let Some(r) = authenticator_ref {
-                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_provider_system)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                Some(resolve_provider_no(client, cfg, token, r).await.map_err(|e| anyhow::anyhow!("{e}"))?)
             } else {
                 None
             };
@@ -460,9 +452,7 @@ async fn process_resource(
                 .and_then(|v| v.get("reference"))
                 .and_then(Value::as_str);
             let provider_no = if let Some(r) = requester_ref {
-                resolve_identifier(client, cfg, token, r, &cfg.fhir.oscar_provider_system)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                Some(resolve_provider_no(client, cfg, token, r).await.map_err(|e| anyhow::anyhow!("{e}"))?)
             } else {
                 None
             };
@@ -590,6 +580,44 @@ fn identifier_value(resource: &Value, system: &str) -> Option<String> {
                 .and_then(|i| i.get("value").and_then(Value::as_str))
         })
         .map(String::from)
+}
+
+/// Resolves an Oscar `providerNo` for a Practitioner reference: live HAPI
+/// identifier lookup first, falling back to the static
+/// `[writeback.practitioner_provider_map]` config table, and finally to
+/// `default_consult_provider_no` if set. Returns `Err(NoProvider)` if none
+/// of the three resolve.
+async fn resolve_provider_no(
+    client: &Client,
+    cfg: &Config,
+    token: Option<&str>,
+    practitioner_ref: &str, // e.g. "Practitioner/pr-1a38d519-..."
+) -> std::result::Result<String, MappingError> {
+    if let Some(id) = resolve_identifier(
+        client,
+        cfg,
+        token,
+        practitioner_ref,
+        &cfg.fhir.oscar_provider_system,
+    )
+    .await?
+    {
+        return Ok(id);
+    }
+
+    let practitioner_id = practitioner_ref
+        .rsplit('/')
+        .next()
+        .unwrap_or(practitioner_ref);
+    if let Some(mapped) = cfg.writeback.practitioner_provider_map.get(practitioner_id) {
+        return Ok(mapped.clone());
+    }
+
+    if let Some(default) = &cfg.writeback.default_consult_provider_no {
+        return Ok(default.clone());
+    }
+
+    Err(MappingError::NoProvider(practitioner_ref.to_string()))
 }
 
 /// Fetches a referenced resource from HAPI and returns the value of the
