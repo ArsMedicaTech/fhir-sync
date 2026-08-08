@@ -217,6 +217,7 @@ fn build_put_request(
         DomainResource::Appointment(a) => (&fhir_cfg.oscar_appointment_system, a.appointment_no.as_str()),
         DomainResource::Encounter(e) => (&fhir_cfg.oscar_note_system, e.uuid.as_deref().unwrap_or(&e.note_id)),
         DomainResource::DocumentReference(d) => (&fhir_cfg.oscar_note_document_system, d.uuid.as_deref().unwrap_or(&d.note_id)),
+        DomainResource::DiagnosticReport(r) => (&fhir_cfg.oscar_consult_response_system, r.response_id.as_str()),
         DomainResource::Condition(c) => {
             let sys = if c.source_table == "dxresearch" {
                 &fhir_cfg.oscar_dxresearch_system
@@ -281,6 +282,9 @@ async fn sync_one(
         }
         DomainResource::CareTeam(care_team) => {
             sync_care_team(client, fhir_cfg, token, event, care_team).await
+        }
+        DomainResource::DiagnosticReport(report) => {
+            oscar2::sync_diagnostic_report(client, fhir_cfg, token, event, report, &cfg.oscar).await
         }
     }
 }
