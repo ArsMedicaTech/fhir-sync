@@ -826,7 +826,7 @@ pub fn validate_writeback(cfg: &Config) -> anyhow::Result<()> {
     }
 
     const VALID_RESOURCE_TYPES: &[&str] =
-        &["Patient", "Appointment", "Encounter", "DocumentReference"];
+        &["Patient", "Appointment", "Encounter", "DocumentReference", "ServiceRequest"];
     for r in &cfg.writeback.hapi_resource_types {
         if !VALID_RESOURCE_TYPES.contains(&r.as_str()) {
             anyhow::bail!(
