@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use mysql_async::prelude::*;
-use mysql_async::{Row, Value};
+use mysql_async::Row;
 use tracing::{warn};
 
 use crate::config::DatabaseConfig;
@@ -23,32 +23,6 @@ fn lookup<'a>(change: &'a RowChange, columns: &ColumnMap, name: &str) -> Option<
 
 fn lookup_any<'a>(change: &'a RowChange, columns: &ColumnMap, names: &[&str]) -> Option<&'a str> {
     names.iter().find_map(|n| lookup(change, columns, n))
-}
-
-fn mysql_value_to_string(value: &Value) -> Option<String> {
-    match value {
-        Value::NULL => None,
-        Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        Value::Int(i) => Some(i.to_string()),
-        Value::UInt(u) => Some(u.to_string()),
-        Value::Float(f) => Some(f.to_string()),
-        Value::Double(d) => Some(d.to_string()),
-        Value::Date(year, month, day, hour, minute, second, micro) => {
-            if *hour == 0 && *minute == 0 && *second == 0 && *micro == 0 {
-                Some(format!("{year:04}-{month:02}-{day:02}"))
-            } else {
-                Some(format!(
-                    "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}"
-                ))
-            }
-        }
-        Value::Time(negative, days, hours, minutes, seconds, _micro) => {
-            let sign = if *negative { "-" } else { "" };
-            let total_hours = days * 24 + u32::from(*hours);
-            Some(format!("{sign}{total_hours:02}:{minutes:02}:{seconds:02}"))
-        }
-        _ => None,
-    }
 }
 
 /// Maps one `consultationResponse` row to a `DomainDiagnosticReport`.
