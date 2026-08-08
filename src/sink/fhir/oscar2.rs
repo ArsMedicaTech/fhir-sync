@@ -9,8 +9,7 @@ use fhirbolt::model::r4b::resources::{
 };
 use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
-    Age, Annotation, Attachment, CodeableConcept, Coding, DateTime, Identifier, Meta, Period,
-    Reference,
+    Age, Annotation, Attachment, CodeableConcept, Coding, Identifier, Meta, Period, Reference,
 };
 use tracing::{info, warn};
 
@@ -744,22 +743,24 @@ fn build_diagnostic_report(
         dr.effective = Some(DiagnosticReportEffective::DateTime(effective.into()));
     }
 
-    if let Some(impression) = &report.impression {
-        dr.conclusion = Some(impression.clone().into());
-    }
-
+    let mut conclusion = String::new();
     if let Some(examination) = &report.examination {
-        dr.note.push(Annotation {
-            text: format!("Examination: {}", examination).into(),
-            ..Default::default()
-        });
+        conclusion.push_str(&format!("Examination: {}", examination));
     }
-
+    if let Some(impression) = &report.impression {
+        if !conclusion.is_empty() {
+            conclusion.push_str("\n\n");
+        }
+        conclusion.push_str(&format!("Impression: {}", impression));
+    }
     if let Some(plan) = &report.plan {
-        dr.note.push(Annotation {
-            text: format!("Plan: {}", plan).into(),
-            ..Default::default()
-        });
+        if !conclusion.is_empty() {
+            conclusion.push_str("\n\n");
+        }
+        conclusion.push_str(&format!("Plan: {}", plan));
+    }
+    if !conclusion.is_empty() {
+        dr.conclusion = Some(conclusion.into());
     }
 
     Ok(dr)
