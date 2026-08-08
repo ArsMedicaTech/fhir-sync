@@ -16,7 +16,7 @@ use mysql_async::{prelude::*, Conn, Params, Value};
 use tracing::{info, instrument};
 
 use crate::config::WritebackDatabaseConfig;
-use crate::writeback::mappers::{AppointmentRow, DemographicRow, NoteRow};
+use crate::writeback::mappers::{AppointmentRow, ConsultationRequestRow, DemographicRow, NoteRow};
 
 /// MariaDB write-back sink.  Holds a connection pool so every transaction
 /// gets its own `Conn`.
@@ -306,6 +306,143 @@ impl OscarTx {
 
         info!("casemgmt_note inserted: uuid={uuid}");
         Ok(uuid)
+    }
+
+    /// INSERT or UPDATE a `consultationRequests` row.
+    #[instrument(skip(self, row))]
+    pub async fn write_consultation_request(
+        &mut self,
+        existing: Option<&str>,
+        row: &ConsultationRequestRow,
+        tz: &Tz,
+    ) -> Result<String> {
+        let demographic_no = row
+            .demographic_no
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("consultationRequests requires demographic_no"))?;
+        let service_id = row
+            .service_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("consultationRequests requires service_id"))?;
+        let status = row.status.as_deref().unwrap_or("1");
+        let source = row.source.as_deref().unwrap_or("AMT-eReferral");
+        let now = now_local(tz);
+
+        if let Some(id) = existing {
+            let mut sets = Vec::new();
+            let mut params: Vec<Value> = Vec::new();
+            push_set(&mut sets, &mut params, "demographicNo", Some(demographic_no));
+            push_set(&mut sets, &mut params, "providerNo", row.provider_no.as_deref());
+            push_set(&mut sets, &mut params, "serviceId", Some(service_id));
+            push_set(&mut sets, &mut params, "specId", row.spec_id.as_deref());
+            push_set(&mut sets, &mut params, "referalDate", row.referal_date.as_deref());
+            push_set(&mut sets, &mut params, "reason", row.reason.as_deref());
+            push_set(&mut sets, &mut params, "clinicalInfo", row.clinical_info.as_deref());
+            push_set(&mut sets, &mut params, "concurrentProblems", row.concurrent_problems.as_deref());
+            push_set(&mut sets, &mut params, "currentMeds", row.current_meds.as_deref());
+            push_set(&mut sets, &mut params, "allergies", row.allergies.as_deref());
+            push_set(&mut sets, &mut params, "sendTo", row.send_to.as_deref());
+
+            // status, appointmentDate, appointmentTime, and statusText are owned
+            // by the Oscar consult workflow and must never be overwritten.
+            sets.push("lastUpdateDate=?".to_string());
+            params.push(Value::Bytes(now.as_bytes().to_vec()));
+
+            let sql = format!(
+                "UPDATE consultationRequests SET {} WHERE requestId = ?",
+                sets.join(", ")
+            );
+            params.push(Value::Bytes(id.as_bytes().to_vec()));
+
+            self.conn
+                .exec_drop(sql, Params::Positional(params))
+                .await
+                .context("updating consultationRequests")?;
+            info!("consultationRequests updated: requestId={id}");
+            Ok(id.to_string())
+        } else {
+            let mut cols = Vec::new();
+            let mut params: Vec<Value> = Vec::new();
+            push_col(&mut cols, &mut params, "demographicNo", Some(demographic_no));
+            push_col(&mut cols, &mut params, "providerNo", row.provider_no.as_deref());
+            push_col(&mut cols, &mut params, "serviceId", Some(service_id));
+            push_col(&mut cols, &mut params, "specId", row.spec_id.as_deref());
+            push_col(&mut cols, &mut params, "referalDate", row.referal_date.as_deref());
+            push_col(&mut cols, &mut params, "reason", row.reason.as_deref());
+            push_col(&mut cols, &mut params, "clinicalInfo", row.clinical_info.as_deref());
+            push_col(&mut cols, &mut params, "concurrentProblems", row.concurrent_problems.as_deref());
+            push_col(&mut cols, &mut params, "currentMeds", row.current_meds.as_deref());
+            push_col(&mut cols, &mut params, "allergies", row.allergies.as_deref());
+            push_col(&mut cols, &mut params, "status", Some(status));
+            push_col(&mut cols, &mut params, "source", Some(source));
+            push_col(&mut cols, &mut params, "sendTo", row.send_to.as_deref());
+
+            cols.push("lastUpdateDate".to_string());
+            params.push(Value::Bytes(now.as_bytes().to_vec()));
+
+            let placeholders = std::iter::repeat("?").take(cols.len()).collect::<Vec<_>>();
+            let sql = format!(
+                "INSERT INTO consultationRequests ({}) VALUES ({})",
+                cols.join(", "),
+                placeholders.join(", ")
+            );
+
+            self.conn
+                .exec_drop(sql, Params::Positional(params))
+                .await
+                .context("inserting consultationRequests")?;
+
+            let id = self.last_insert_id().await?;
+            info!("consultationRequests inserted: requestId={id}");
+            Ok(id.to_string())
+        }
+    }
+
+    /// Upserts a `consultationRequestExt` row keyed on `(requestId, name)`.
+    pub async fn upsert_consultation_request_ext(
+        &mut self,
+        request_id: &str,
+        name: &str,
+        value: &str,
+    ) -> Result<()> {
+        let existing: Vec<(u64,)> = self
+            .conn
+            .exec(
+                "SELECT id FROM consultationRequestExt WHERE requestId = ? AND name = ?",
+                Params::Positional(vec![
+                    Value::Bytes(request_id.as_bytes().to_vec()),
+                    Value::Bytes(name.as_bytes().to_vec()),
+                ]),
+            )
+            .await
+            .context("selecting consultationRequestExt")?;
+
+        if existing.is_empty() {
+            self.conn
+                .exec_drop(
+                    "INSERT INTO consultationRequestExt (requestId, name, value, dateCreated) VALUES (?, ?, ?, NOW())",
+                    Params::Positional(vec![
+                        Value::Bytes(request_id.as_bytes().to_vec()),
+                        Value::Bytes(name.as_bytes().to_vec()),
+                        Value::Bytes(value.as_bytes().to_vec()),
+                    ]),
+                )
+                .await
+                .context("inserting consultationRequestExt")?;
+        } else {
+            self.conn
+                .exec_drop(
+                    "UPDATE consultationRequestExt SET value = ? WHERE id = ?",
+                    Params::Positional(vec![
+                        Value::Bytes(value.as_bytes().to_vec()),
+                        Value::Bytes(existing[0].0.to_string().as_bytes().to_vec()),
+                    ]),
+                )
+                .await
+                .context("updating consultationRequestExt")?;
+        }
+        info!("consultationRequestExt upserted: requestId={request_id} name={name}");
+        Ok(())
     }
 
     /// Commits the transaction.
