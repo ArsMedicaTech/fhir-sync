@@ -5,6 +5,7 @@
 pub mod appointment;
 pub mod note;
 pub mod patient;
+pub mod service_request;
 
 pub use appointment::{AppointmentRow, fhir_appointment_to_row};
 pub use note::{NoteRow, fhir_document_reference_to_row};
