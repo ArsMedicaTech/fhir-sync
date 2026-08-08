@@ -65,6 +65,7 @@ mod tests {
             appointment_status_map: OscarConfig::default().appointment_status_map,
             default_mrp_provider_no: fallback.map(str::to_string),
             care_team_enabled: true,
+            consult_response_status_map: OscarConfig::default().consult_response_status_map,
         }
     }
 
