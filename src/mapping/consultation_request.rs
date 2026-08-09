@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
-use mysql_async::prelude::*;
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::config::DatabaseConfig;
 use crate::domain::service_request::DomainServiceRequest;
 use crate::mapping::syncable_provider;
 use crate::sources::RowChange;
@@ -29,54 +26,46 @@ fn lookup<'a>(change: &'a RowChange, columns: &ColumnMap, name: &str) -> Option<
 /// human changing the request's Status in Oscar's UI) needs to resync back
 /// into AMT so the corresponding task reflects progress/completion there.
 ///
-/// Oscar does not update the AMT-originated row in place when its status
-/// changes -- "Update Consultation Request" always inserts a *new*
-/// `consultationRequests` row with a blank `source` (confirmed empirically:
-/// completing a request spawns a sibling row, not a mutation). So the
-/// changed row itself is never the one carrying `source = 'AMT-eReferral'`
-/// or the `amt.fhirServiceRequestId` ext link -- those live on the original
-/// row. This function therefore ignores the changed row's own `source` and
-/// instead resolves the target `ServiceRequest` by correlating on
-/// `demographicNo` against `consultationRequestExt`, mirroring the D1
-/// heuristic in `consultation_response.rs`'s `resolve_based_on`: exactly one
-/// AMT-originated request for that patient must exist, or the row is
-/// skipped (dead-lettered via `Ok(None)`, never guessed).
+/// Deliberately does NOT try to correlate via `source` or
+/// `consultationRequestExt`: both were found empirically to be unreliable --
+/// Oscar's own "Update Consultation Request" save wipes `source` back to
+/// blank and replaces that request's extension rows wholesale (its classic
+/// JSP form has no `source` field and does not preserve AMT's tracking ext
+/// rows on save), even though it edits the row in place. `requestId` is the
+/// one thing that stays stable across such an edit, and it's exactly the
+/// value AMT used as the FHIR identifier when it originally created the
+/// resource (see `writeback/mappers/service_request.rs`), so it's used
+/// directly here rather than resolved via a live correlation query.
 ///
-/// The resulting `DomainServiceRequest.request_id` is the *original*
-/// AMT-originated `requestId` (which is what the FHIR identifier was built
-/// from at write-back time) -- not the id of the row that actually changed.
-/// Status/reason/etc. are taken from the changed row, since that carries the
-/// current real-world state.
-pub async fn row_to_domain_service_request(
-    change: &RowChange,
-    columns: &ColumnMap,
-    db: &DatabaseConfig,
-) -> Result<Option<DomainServiceRequest>> {
-    let changed_request_id = match lookup(change, columns, "requestId") {
+/// Trade-off: a request that was always Oscar-native (never touched by
+/// AMT) will also get synced, producing a new orphan `ServiceRequest` in
+/// AMT rather than being filtered out -- there's no reliable signal left to
+/// distinguish that case once Oscar has scrubbed `source`. This matches the
+/// precedent already set by the `demographic` table sync, which does not
+/// filter by origin either.
+///
+/// Returns `None` if the row has no `requestId` or `demographicNo`.
+pub fn row_to_domain_service_request(change: &RowChange, columns: &ColumnMap) -> Option<DomainServiceRequest> {
+    let request_id = match lookup(change, columns, "requestId") {
         Some(id) => id.to_string(),
         None => {
             info!("consultationRequests mapping: skipping row with no requestId");
-            return Ok(None);
+            return None;
         }
     };
 
     let demographic_no = match lookup(change, columns, "demographicNo") {
         Some(d) => d.to_string(),
         None => {
-            info!("consultationRequests mapping: skipping requestId={changed_request_id} (no demographicNo)");
-            return Ok(None);
+            info!("consultationRequests mapping: skipping requestId={request_id} (no demographicNo)");
+            return None;
         }
-    };
-
-    let amt_request_id = match resolve_amt_request_id(db, &demographic_no).await? {
-        Some(id) => id,
-        None => return Ok(None), // no/ambiguous AMT lineage already logged
     };
 
     let provider_no = syncable_provider(lookup(change, columns, "providerNo"));
 
-    Ok(Some(DomainServiceRequest {
-        request_id: amt_request_id,
+    Some(DomainServiceRequest {
+        request_id,
         demographic_no: Some(demographic_no),
         provider_no,
         reason: lookup(change, columns, "reason").map(str::to_string),
@@ -84,54 +73,89 @@ pub async fn row_to_domain_service_request(
         referal_date: lookup(change, columns, "referalDate").map(str::to_string),
         urgency: lookup(change, columns, "urgency").map(str::to_string),
         status: lookup(change, columns, "status").map(str::to_string),
-    }))
+    })
 }
 
-/// Finds the single AMT-originated `consultationRequests.requestId` for a
-/// patient, i.e. the row `write_consultation_request` created and tagged
-/// with `source = 'AMT-eReferral'` and an `amt.fhirServiceRequestId` ext
-/// row. Returns `Ok(None)` (already logged) if there are zero or more than
-/// one candidates -- never guesses which lineage a status change belongs to.
-async fn resolve_amt_request_id(db: &DatabaseConfig, demographic_no: &str) -> Result<Option<String>> {
-    let url = format!(
-        "mysql://{}:{}@{}:{}/{}",
-        db.user, db.password, db.host, db.port, db.schema
-    );
-    let pool = mysql_async::Pool::new(url.as_str());
-    let mut conn = pool
-        .get_conn()
-        .await
-        .context("connecting to resolve AMT-originated consultation request")?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let rows: Vec<(i64,)> = conn
-        .exec(
-            "SELECT DISTINCT cr.requestId \
-             FROM consultationRequests cr \
-             JOIN consultationRequestExt ext \
-               ON ext.requestId = cr.requestId AND ext.name = 'amt.fhirServiceRequestId' \
-             WHERE cr.demographicNo = :demographic_no AND cr.source = 'AMT-eReferral'",
-            params! { "demographic_no" => demographic_no },
+    fn change(values: Vec<Option<&str>>) -> RowChange {
+        RowChange {
+            schema: "oscar".to_string(),
+            table: "consultationRequests".to_string(),
+            op: crate::sources::RowOp::Update,
+            after: values.into_iter().map(|v| v.map(str::to_string)).collect(),
+            position: crate::sources::SourcePosition::FilePos {
+                file: String::new(),
+                pos: 0,
+            },
+        }
+    }
+
+    fn columns(names: &[&str]) -> ColumnMap {
+        names.iter().enumerate().map(|(i, n)| (n.to_string(), i)).collect()
+    }
+
+    #[test]
+    fn maps_request_using_its_own_requestid() {
+        let cols = columns(&[
+            "requestId",
+            "demographicNo",
+            "providerNo",
+            "reason",
+            "clinicalInfo",
+            "referalDate",
+            "urgency",
+            "status",
+        ]);
+        let r = row_to_domain_service_request(
+            &change(vec![
+                Some("13"),
+                Some("118"),
+                Some("999998"),
+                Some("Radiology referral"),
+                Some("Chest pain"),
+                Some("2026-08-09"),
+                Some("2"),
+                Some("4"),
+            ]),
+            &cols,
         )
-        .await
-        .context("selecting AMT-originated consultation request")?;
+        .unwrap();
 
-    drop(conn);
-    let _ = pool.disconnect().await;
-
-    if rows.is_empty() {
-        info!(
-            "consultationRequests mapping: no AMT-originated consultationRequest for demographic_no={demographic_no}; skipping"
-        );
-        return Ok(None);
+        assert_eq!(r.request_id, "13");
+        assert_eq!(r.demographic_no, Some("118".to_string()));
+        assert_eq!(r.provider_no, Some("999998".to_string()));
+        assert_eq!(r.status, Some("4".to_string()));
     }
 
-    if rows.len() > 1 {
-        let ids: Vec<String> = rows.iter().map(|(id,)| id.to_string()).collect();
-        warn!(
-            "consultationRequests mapping: ambiguous AMT-originated consultationRequest for demographic_no={demographic_no}: {ids:?}; skipping"
-        );
-        return Ok(None);
+    #[test]
+    fn survives_blank_source_and_missing_ext_rows() {
+        // No "source" column at all in this change -- mirrors Oscar wiping
+        // it on save. Mapping must still succeed via requestId alone.
+        let cols = columns(&["requestId", "demographicNo", "status"]);
+        let r = row_to_domain_service_request(&change(vec![Some("13"), Some("118"), Some("4")]), &cols).unwrap();
+        assert_eq!(r.request_id, "13");
+        assert_eq!(r.status, Some("4".to_string()));
     }
 
-    Ok(Some(rows[0].0.to_string()))
+    #[test]
+    fn missing_request_id_is_skipped() {
+        let cols = columns(&["requestId", "demographicNo"]);
+        assert!(row_to_domain_service_request(&change(vec![None, Some("118")]), &cols).is_none());
+    }
+
+    #[test]
+    fn missing_demographic_no_is_skipped() {
+        let cols = columns(&["requestId", "demographicNo"]);
+        assert!(row_to_domain_service_request(&change(vec![Some("13"), None]), &cols).is_none());
+    }
+
+    #[test]
+    fn system_actor_provider_is_omitted() {
+        let cols = columns(&["requestId", "demographicNo", "providerNo"]);
+        let r = row_to_domain_service_request(&change(vec![Some("13"), Some("118"), Some("-1")]), &cols).unwrap();
+        assert_eq!(r.provider_no, None);
+    }
 }
