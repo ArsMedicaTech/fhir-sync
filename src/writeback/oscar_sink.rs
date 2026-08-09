@@ -1,9 +1,9 @@
 //! Oscar MariaDB sink for the AMT → Oscar write-back path.
 //!
-//! This module only performs `INSERT` and `UPDATE` on the three allowlisted
-//! tables (`demographic`, `appointment`, `casemgmt_note`).  `casemgmt_note` is
-//! append-only: it never runs `UPDATE`, only `INSERT`.  There are no `DELETE`
-//! statements anywhere.
+//! This module only performs `INSERT` and `UPDATE` on the allowlisted
+//! tables (`demographic`, `appointment`, `casemgmt_note`, `consultationRequests`,
+//! `consultationRequestExt`).  `casemgmt_note` is append-only: it never runs
+//! `UPDATE`, only `INSERT`.  There are no `DELETE` statements anywhere.
 //!
 //! Every write is executed inside an explicit transaction.  The caller decides
 //! when to `COMMIT` or `ROLLBACK`, which lets the HAPI identifier write-back
@@ -80,9 +80,14 @@ impl OscarTx {
             push_set(&mut sets, &mut params, "first_name", row.first_name.as_deref());
             push_set(&mut sets, &mut params, "last_name", row.last_name.as_deref());
 
-            // Special case for middle names
-            sets.push("middleNames=?".to_string());
-            params.push(Value::Bytes(row.middle_names.as_deref().unwrap_or("").as_bytes().to_vec()));
+            // middleNames is not-null in Oscar's Demographic.hbm.xml; never write NULL.
+            push_set_required(
+                &mut sets,
+                &mut params,
+                "middleNames",
+                row.middle_names.as_deref(),
+                "",
+            );
             
             push_set(&mut sets, &mut params, "pref_name", row.pref_name.as_deref());
             push_set(&mut sets, &mut params, "title", row.title.as_deref());
@@ -122,9 +127,14 @@ impl OscarTx {
             push_col(&mut cols, &mut params, "first_name", row.first_name.as_deref());
             push_col(&mut cols, &mut params, "last_name", row.last_name.as_deref());
             
-            // Special case for null middle names
-            cols.push("middleNames".to_string());
-            params.push(Value::Bytes(row.middle_names.as_deref().unwrap_or("").as_bytes().to_vec()));
+            // middleNames is not-null in Oscar's Demographic.hbm.xml; never write NULL.
+            push_col_required(
+                &mut cols,
+                &mut params,
+                "middleNames",
+                row.middle_names.as_deref(),
+                "",
+            );
             
             push_col(&mut cols, &mut params, "pref_name", row.pref_name.as_deref());
             push_col(&mut cols, &mut params, "title", row.title.as_deref());
@@ -351,6 +361,18 @@ impl OscarTx {
             push_set(&mut sets, &mut params, "allergies", row.allergies.as_deref());
             push_set(&mut sets, &mut params, "sendTo", row.send_to.as_deref());
 
+            // patientWillBook is a primitive boolean in Oscar's entity;
+            // urgency is guarded by a null-deref in the consult list JSP.
+            // Both default to safe, non-null values.
+            push_set_required(
+                &mut sets,
+                &mut params,
+                "patientWillBook",
+                row.patient_will_book.as_deref(),
+                "0",
+            );
+            push_set_required(&mut sets, &mut params, "urgency", row.urgency.as_deref(), "2");
+
             // status, appointmentDate, appointmentTime, and statusText are owned
             // by the Oscar consult workflow and must never be overwritten.
             sets.push("lastUpdateDate=?".to_string());
@@ -384,6 +406,18 @@ impl OscarTx {
             push_col(&mut cols, &mut params, "status", Some(status));
             push_col(&mut cols, &mut params, "source", Some(source));
             push_col(&mut cols, &mut params, "sendTo", row.send_to.as_deref());
+
+            // patientWillBook is a primitive boolean in Oscar's entity;
+            // urgency is guarded by a null-deref in the consult list JSP.
+            // Both default to safe, non-null values.
+            push_col_required(
+                &mut cols,
+                &mut params,
+                "patientWillBook",
+                row.patient_will_book.as_deref(),
+                "0",
+            );
+            push_col_required(&mut cols, &mut params, "urgency", row.urgency.as_deref(), "2");
 
             cols.push("lastUpdateDate".to_string());
             params.push(Value::Bytes(now.as_bytes().to_vec()));
@@ -503,5 +537,77 @@ fn push_col(cols: &mut Vec<String>, params: &mut Vec<Value>, col: &str, val: Opt
     if let Some(v) = val {
         cols.push(col.to_string());
         params.push(Value::Bytes(v.as_bytes().to_vec()));
+    }
+}
+
+/// Always writes `col`, substituting `default` when `val` is `None`.
+///
+/// Use for columns Oscar's Hibernate mapping treats as mandatory — either a
+/// primitive-typed field (cannot hold NULL) or `not-null="true"` in the
+/// entity's .hbm.xml. MySQL accepts NULL for these; Oscar cannot load the
+/// row. See HIBERNATE_MANDATORY_COLS.md.
+fn push_col_required(
+    cols: &mut Vec<String>,
+    params: &mut Vec<Value>,
+    col: &str,
+    val: Option<&str>,
+    default: &str,
+) {
+    let v = val.unwrap_or(default);
+    cols.push(col.to_string());
+    params.push(Value::Bytes(v.as_bytes().to_vec()));
+}
+
+/// `push_col_required` counterpart for `UPDATE ... SET` clauses.
+fn push_set_required(
+    sets: &mut Vec<String>,
+    params: &mut Vec<Value>,
+    col: &str,
+    val: Option<&str>,
+    default: &str,
+) {
+    let v = val.unwrap_or(default);
+    sets.push(format!("{col}=?"));
+    params.push(Value::Bytes(v.as_bytes().to_vec()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_col_required_fills_default() {
+        let mut cols = Vec::new();
+        let mut params = Vec::new();
+        push_col_required(&mut cols, &mut params, "urgency", None, "2");
+        assert_eq!(cols, vec!["urgency"]);
+        assert_eq!(params, vec![Value::Bytes(b"2".to_vec())]);
+    }
+
+    #[test]
+    fn push_col_required_uses_provided_value() {
+        let mut cols = Vec::new();
+        let mut params = Vec::new();
+        push_col_required(&mut cols, &mut params, "urgency", Some("1"), "2");
+        assert_eq!(cols, vec!["urgency"]);
+        assert_eq!(params, vec![Value::Bytes(b"1".to_vec())]);
+    }
+
+    #[test]
+    fn push_set_required_fills_default() {
+        let mut sets = Vec::new();
+        let mut params = Vec::new();
+        push_set_required(&mut sets, &mut params, "patientWillBook", None, "0");
+        assert_eq!(sets, vec!["patientWillBook=?"]);
+        assert_eq!(params, vec![Value::Bytes(b"0".to_vec())]);
+    }
+
+    #[test]
+    fn push_col_skips_none() {
+        let mut cols = Vec::new();
+        let mut params = Vec::new();
+        push_col(&mut cols, &mut params, "specId", None);
+        assert!(cols.is_empty());
+        assert!(params.is_empty());
     }
 }
