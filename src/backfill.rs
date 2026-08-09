@@ -261,7 +261,7 @@ async fn scan_table(
 async fn scan_consultation_response_table(
     conn: &mut Conn,
     db: &DatabaseConfig,
-    cfg: &Config,
+    _cfg: &Config,
     table: &str,
     order_col: &str,
     columns: &ColumnMap,

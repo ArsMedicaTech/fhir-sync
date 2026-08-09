@@ -1615,6 +1615,7 @@ mod tests {
             default_mrp_provider_no: None,
             care_team_enabled: true,
             consult_response_status_map: crate::config::OscarConfig::default().consult_response_status_map,
+            consult_request_status_map: crate::config::OscarConfig::default().consult_request_status_map,
         }
     }
 

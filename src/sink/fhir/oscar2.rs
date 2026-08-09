@@ -883,7 +883,7 @@ fn build_service_request(
 
     if let Some(clinical_info) = &req.clinical_info {
         sr.note.push(Annotation {
-            text: Some(clinical_info.clone().into()),
+            text: clinical_info.clone().into(),
             ..Default::default()
         });
     }

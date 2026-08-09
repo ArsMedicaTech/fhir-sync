@@ -32,7 +32,7 @@ pub fn row_to_domain_practitioner(change: &RowChange, columns: &ColumnMap) -> Op
     }
 
     // D3: `ohip_no` is a data-migration artifact in BC builds; warn but do not map.
-    if let Some(ohip) = lookup_any(change, columns, &["ohip_no", "ohip"]) {
+    if let Some(_ohip) = lookup_any(change, columns, &["ohip_no", "ohip"]) {
         warn!(
             "provider mapping: ohip_no present for provider_no={provider_no}; this is a data-migration artifact and is intentionally not mapped (D-1)"
         );
