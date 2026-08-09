@@ -58,6 +58,14 @@ pub struct OscarConfig {
     /// defaulting.
     #[serde(default = "default_consult_response_status_map")]
     pub consult_response_status_map: HashMap<String, String>,
+    /// Oscar `consultationRequests.status` -> FHIR `ServiceRequest.status`,
+    /// for resyncing status changes made in Oscar's own consult UI back to
+    /// AMT. Defaults reflect the four Status radio options in Oscar's
+    /// ConsultationFormRequest.jsp (confirmed live: "Nothing"=1, "Pending
+    /// Specialist Callback"=2, "Pending Patient Callback"=3,
+    /// "Completed"=4). Override here if a given Oscar build's codes differ.
+    #[serde(default = "default_consult_request_status_map")]
+    pub consult_request_status_map: HashMap<String, String>,
 }
 
 impl Default for OscarConfig {
@@ -69,6 +77,7 @@ impl Default for OscarConfig {
             default_mrp_provider_no: None,
             care_team_enabled: true,
             consult_response_status_map: default_consult_response_status_map(),
+            consult_request_status_map: default_consult_request_status_map(),
         }
     }
 }
@@ -89,6 +98,15 @@ fn default_appointment_status_map() -> HashMap<String, String> {
 
 fn default_consult_response_status_map() -> HashMap<String, String> {
     HashMap::new()
+}
+
+fn default_consult_request_status_map() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    m.insert("1".to_string(), "active".to_string()); // Nothing (not yet actioned)
+    m.insert("2".to_string(), "active".to_string()); // Pending Specialist Callback
+    m.insert("3".to_string(), "on-hold".to_string()); // Pending Patient Callback
+    m.insert("4".to_string(), "completed".to_string()); // Completed
+    m
 }
 
 fn default_sentinel_update_user() -> String {
@@ -1032,6 +1050,7 @@ mod tests {
                 default_mrp_provider_no: None,
                 care_team_enabled: true,
                 consult_response_status_map: OscarConfig::default().consult_response_status_map,
+                consult_request_status_map: OscarConfig::default().consult_request_status_map,
             },
             debug: None,
             writeback: WritebackConfig::default(),
@@ -1057,6 +1076,7 @@ mod tests {
                 default_mrp_provider_no: None,
                 care_team_enabled: true,
                 consult_response_status_map: OscarConfig::default().consult_response_status_map,
+                consult_request_status_map: OscarConfig::default().consult_request_status_map,
             },
             debug: None,
             writeback: WritebackConfig::default(),

@@ -5,7 +5,7 @@ use fhirbolt::model::r4b::resources::{
     Bundle, BundleEntry, BundleEntryRequest, Condition, ConditionAbatement, ConditionOnset,
     DiagnosticReport, DiagnosticReportEffective, DocumentReference, DocumentReferenceContent,
     DocumentReferenceContext, Encounter, EncounterParticipant, FamilyMemberHistory,
-    FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset,
+    FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset, ServiceRequest,
 };
 use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
@@ -17,6 +17,7 @@ use crate::domain::condition::{DomainCondition, DomainFamilyMemberHistory};
 use crate::domain::diagnostic_report::DomainDiagnosticReport;
 use crate::domain::document_reference::DomainDocumentReference;
 use crate::domain::encounter::DomainEncounter;
+use crate::domain::service_request::DomainServiceRequest;
 use crate::event::{Op, ResourceType};
 
 use super::{FhirConfig, FhirResult, OscarConfig, SyncEvent, SyncFailure, parse_location_id, parse_location_version_id, META_SOURCE};
@@ -142,6 +143,29 @@ pub(super) async fn sync_diagnostic_report(
     );
     let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
     let identifier = format!("{}|{}", fhir_cfg.oscar_consult_response_system, event.payload().source_id());
+    info!(
+        "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
+        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+    );
+    Ok(result)
+}
+
+pub(super) async fn sync_service_request(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    request: &DomainServiceRequest,
+    oscar_cfg: &OscarConfig,
+) -> Result<FhirResult, SyncFailure> {
+    let fhir_request = build_service_request(request, fhir_cfg, oscar_cfg, event.op())?;
+    let bundle = build_conditional_put_bundle(
+        FhirResource::ServiceRequest(Box::new(fhir_request)),
+        &fhir_cfg.oscar_consult_request_system,
+        event,
+    );
+    let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
+    let identifier = format!("{}|{}", fhir_cfg.oscar_consult_request_system, event.payload().source_id());
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
         event.idempotency_key(), identifier, result.fhir_id, result.version_id
@@ -764,6 +788,107 @@ fn build_diagnostic_report(
     }
 
     Ok(dr)
+}
+
+/// Builds a full replacement `ServiceRequest` from an Oscar `consultationRequests`
+/// row and PUTs it back over the same resource AMT originally created
+/// (keyed on `oscar_consult_request_system` + `requestId`). This resyncs
+/// status changes a human makes in Oscar's own consult UI (Nothing / Pending
+/// Specialist Callback / Pending Patient Callback / Completed) back into AMT.
+///
+/// Because this is a full-resource conditional PUT (matching the pattern
+/// used for every other Oscar -> AMT resource in this file), the row must
+/// carry enough fields to reconstruct an equivalent resource, not just the
+/// status delta -- otherwise fields AMT set originally (code, subject,
+/// requester) would be dropped by HAPI on replace.
+fn build_service_request(
+    req: &DomainServiceRequest,
+    fhir_cfg: &FhirConfig,
+    oscar_cfg: &OscarConfig,
+    op: Op,
+) -> Result<ServiceRequest, SyncFailure> {
+    let mut sr = ServiceRequest::default();
+
+    sr.meta = Some(Box::new(Meta {
+        source: Some(META_SOURCE.into()),
+        ..Default::default()
+    }));
+
+    sr.identifier.push(Identifier {
+        system: Some(fhir_cfg.oscar_consult_request_system.clone().into()),
+        value: Some(req.request_id.clone().into()),
+        ..Default::default()
+    });
+
+    sr.intent = "order".into();
+
+    let raw_status = req.status.as_deref();
+
+    let fhir_status = if op == Op::Delete {
+        "revoked"
+    } else {
+        match raw_status {
+            Some(code) => oscar_cfg
+                .consult_request_status_map
+                .get(code)
+                .map(String::as_str)
+                .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("unmapped consult request status: {code}")))?,
+            // No status column value yet (e.g. brand new row) -> AMT's own
+            // default expectation for a freshly authored request.
+            None => "active",
+        }
+    };
+    sr.status = fhir_status.into();
+
+    let demographic_no = req
+        .demographic_no
+        .as_deref()
+        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!(
+            "requestId={} has no demographicNo", req.request_id
+        )))?;
+    sr.subject = Box::new(patient_ref(fhir_cfg, demographic_no));
+
+    if let Some(provider_no) = &req.provider_no {
+        sr.requester = Some(Box::new(practitioner_ref(fhir_cfg, provider_no)));
+    }
+
+    if let Some(reason) = &req.reason {
+        sr.code = Some(Box::new(CodeableConcept {
+            text: Some(reason.clone().into()),
+            ..Default::default()
+        }));
+    }
+
+    if let Some(referal_date) = &req.referal_date {
+        sr.authored_on = Some(referal_date.clone().into());
+    }
+
+    // Oscar's urgency (1=Urgent, 2=Non-Urgent, 3=Return) maps onto FHIR
+    // ServiceRequest.priority; unrecognised codes are dropped rather than
+    // dead-lettering the whole sync, since priority is non-essential.
+    if let Some(urgency) = &req.urgency {
+        let priority = match urgency.as_str() {
+            "1" => Some("urgent"),
+            "2" => Some("routine"),
+            "3" => Some("routine"),
+            other => {
+                warn!("service_request sink: unrecognised urgency {other:?}; omitting priority");
+                None
+            }
+        };
+        if let Some(p) = priority {
+            sr.priority = Some(p.into());
+        }
+    }
+
+    if let Some(clinical_info) = &req.clinical_info {
+        sr.note.push(Annotation {
+            text: Some(clinical_info.clone().into()),
+            ..Default::default()
+        });
+    }
+
+    Ok(sr)
 }
 
 // ---------------------------------------------------------------------------

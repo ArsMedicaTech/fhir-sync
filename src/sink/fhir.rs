@@ -228,6 +228,7 @@ fn build_put_request(
         }
         DomainResource::FamilyMemberHistory(f) => (&fhir_cfg.oscar_cpp_condition_system, f.note_id.as_str()),
         DomainResource::CareTeam(c) => (&fhir_cfg.oscar_care_team_system, c.demographic_no.as_str()),
+        DomainResource::ServiceRequest(r) => (&fhir_cfg.oscar_consult_request_system, r.request_id.as_str()),
     };
     let identifier = format!("{}|{}", identifier_system, source_id);
 
@@ -285,6 +286,9 @@ async fn sync_one(
         }
         DomainResource::DiagnosticReport(report) => {
             oscar2::sync_diagnostic_report(client, fhir_cfg, token, event, report, &cfg.oscar).await
+        }
+        DomainResource::ServiceRequest(request) => {
+            oscar2::sync_service_request(client, fhir_cfg, token, event, request, &cfg.oscar).await
         }
     }
 }
