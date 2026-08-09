@@ -361,10 +361,14 @@ async fn emit_row(
                 Vec::new()
             }
         },
-        CONSULTATION_REQUESTS_TABLE => row_to_domain_service_request(&change, columns)
-            .into_iter()
-            .map(DomainResource::ServiceRequest)
-            .collect(),
+        CONSULTATION_REQUESTS_TABLE => match row_to_domain_service_request(&change, columns, &cfg.database).await {
+            Ok(Some(req)) => vec![DomainResource::ServiceRequest(req)],
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                warn!("mariadb_binlog: failed to map consultationRequests row: {e:?}");
+                Vec::new()
+            }
+        },
         _ => return true,
     };
 
