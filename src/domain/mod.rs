@@ -7,3 +7,4 @@ pub mod encounter;
 pub mod patient;
 pub mod practitioner;
 pub mod resource;
+pub mod service_request;

@@ -6,6 +6,7 @@ use crate::domain::document_reference::DomainDocumentReference;
 use crate::domain::encounter::DomainEncounter;
 use crate::domain::patient::DomainPatient;
 use crate::domain::practitioner::DomainPractitioner;
+use crate::domain::service_request::DomainServiceRequest;
 use crate::event::ResourceType;
 
 /// Multi-resource payload carried by `SyncEvent`.
@@ -20,6 +21,7 @@ pub enum DomainResource {
     Condition(DomainCondition),
     FamilyMemberHistory(DomainFamilyMemberHistory),
     CareTeam(DomainCareTeam),
+    ServiceRequest(DomainServiceRequest),
 }
 
 impl DomainResource {
@@ -35,6 +37,7 @@ impl DomainResource {
             DomainResource::Condition(_) => ResourceType::Condition,
             DomainResource::FamilyMemberHistory(_) => ResourceType::FamilyMemberHistory,
             DomainResource::CareTeam(_) => ResourceType::CareTeam,
+            DomainResource::ServiceRequest(_) => ResourceType::ServiceRequest,
         }
     }
 
@@ -51,6 +54,7 @@ impl DomainResource {
             DomainResource::Condition(c) => &c.source_id,
             DomainResource::FamilyMemberHistory(f) => &f.note_id,
             DomainResource::CareTeam(c) => &c.demographic_no,
+            DomainResource::ServiceRequest(r) => &r.request_id,
         }
     }
 
@@ -69,6 +73,7 @@ impl DomainResource {
             },
             DomainResource::FamilyMemberHistory(_) => "casemgmt_note",
             DomainResource::CareTeam(_) => "demographic",
+            DomainResource::ServiceRequest(_) => "consultationRequests",
         }
     }
 }
