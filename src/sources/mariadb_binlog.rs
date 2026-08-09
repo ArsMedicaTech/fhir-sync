@@ -32,6 +32,7 @@ use crate::mapping::appointment::row_to_domain_appointment;
 use crate::mapping::care_team::row_to_domain_care_team;
 use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
+use crate::mapping::consultation_request::row_to_domain_service_request;
 use crate::mapping::consultation_response::row_to_domain_diagnostic_report;
 use crate::mapping::dxresearch::row_to_domain_condition;
 use crate::mapping::provider::row_to_domain_practitioner;
@@ -45,6 +46,7 @@ const APPOINTMENT_TABLE: &str = "appointment";
 const CASEMGMT_NOTE_TABLE: &str = "casemgmt_note";
 const DXRESEARCH_TABLE: &str = "dxresearch";
 const CONSULTATION_RESPONSE_TABLE: &str = "consultationResponse";
+const CONSULTATION_REQUESTS_TABLE: &str = "consultationRequests";
 const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
 const READ_ERROR_BACKOFF_MS: u64 = 100;
 
@@ -85,6 +87,10 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
     column_maps.insert(
         CONSULTATION_RESPONSE_TABLE.to_string(),
         resolve_column_map_for_table(&db, CONSULTATION_RESPONSE_TABLE).await?,
+    );
+    column_maps.insert(
+        CONSULTATION_REQUESTS_TABLE.to_string(),
+        resolve_column_map_for_table(&db, CONSULTATION_REQUESTS_TABLE).await?,
     );
 
     let (mut current_filename, start_position) = resolve_start_position(&cfg).await?;
@@ -355,6 +361,10 @@ async fn emit_row(
                 Vec::new()
             }
         },
+        CONSULTATION_REQUESTS_TABLE => row_to_domain_service_request(&change, columns)
+            .into_iter()
+            .map(DomainResource::ServiceRequest)
+            .collect(),
         _ => return true,
     };
 
@@ -387,7 +397,8 @@ fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str)
                 || t.table == APPOINTMENT_TABLE
                 || t.table == CASEMGMT_NOTE_TABLE
                 || t.table == DXRESEARCH_TABLE
-                || t.table == CONSULTATION_RESPONSE_TABLE)
+                || t.table == CONSULTATION_RESPONSE_TABLE
+                || t.table == CONSULTATION_REQUESTS_TABLE)
         {
             Some(t.table.clone())
         } else {
