@@ -257,3 +257,89 @@ ALTER TABLE demographic
   ADD COLUMN anonymous                 VARCHAR(32)  NULL,
   ADD COLUMN family_physician          VARCHAR(80)  NULL,
   MODIFY COLUMN sex CHAR(1) NOT NULL DEFAULT '';
+
+-- ------------------------------------------------------- consultationRequests
+-- Column set and types verified against live Oscar MariaDB via
+-- information_schema.COLUMNS, 2026-08-08. Note Oscar's own
+-- misspelling of `referalDate` -- preserve it verbatim, do not "fix" it here.
+-- `requestId` is int auto_increment PK, matching live Oscar exactly.
+CREATE TABLE IF NOT EXISTS consultationRequests (
+    referalDate             DATE         NULL,
+    serviceId               INT(10)      NULL,
+    specId                  INT(10)      NULL,
+    appointmentDate         DATE         NULL,
+    appointmentTime         TIME         NULL,
+    reason                  TEXT         NULL,
+    clinicalInfo            TEXT         NULL,
+    currentMeds             TEXT         NULL,
+    allergies               TEXT         NULL,
+    providerNo              VARCHAR(6)   NULL,
+    demographicNo           INT(10)      NULL,
+    status                  CHAR(2)      NULL,
+    statusText              TEXT         NULL,
+    sendTo                  VARCHAR(20)  NULL,
+    requestId               INT(10)      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    concurrentProblems      TEXT         NULL,
+    urgency                 CHAR(2)      NULL,
+    appointmentInstructions VARCHAR(256) NULL,
+    patientWillBook         TINYINT(1)   NULL,
+    followUpDate            DATE         NULL,
+    site_name               TEXT         NULL,
+    signature_img           VARCHAR(20)  NULL,
+    letterheadName          VARCHAR(255) NULL,
+    letterheadAddress       TEXT         NULL,
+    letterheadPhone         VARCHAR(50)  NULL,
+    letterheadFax           VARCHAR(50)  NULL,
+    lastUpdateDate          DATETIME     NOT NULL,
+    fdid                    INT(10)      NULL,
+    source                  VARCHAR(50)  NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------- consultationResponse
+-- Column set and types verified against live Oscar MariaDB, 2026-08-08.
+-- Note this table has NO FK back to consultationRequests -- see that spec's F1-F5.
+-- `referralDate` is spelled correctly here, unlike the request table's
+-- `referalDate` -- both spellings are Oscar's own and must be preserved.
+CREATE TABLE IF NOT EXISTS consultationResponse (
+    responseId          INT(10)      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    responseDate         DATE         NULL,
+    referralDate         DATE         NULL,
+    referringDocId       INT(10)      NULL,
+    appointmentDate      DATE         NULL,
+    appointmentTime      TIME         NULL,
+    appointmentNote      TEXT         NULL,
+    referralReason       TEXT         NULL,
+    examination          TEXT         NULL,
+    impression           TEXT         NULL,
+    plan                 TEXT         NULL,
+    clinicalInfo         TEXT         NULL,
+    currentMeds          TEXT         NULL,
+    allergies            TEXT         NULL,
+    providerNo           VARCHAR(6)   NULL,
+    demographicNo        INT(10)      NULL,
+    status               CHAR(2)      NULL,
+    sendTo               VARCHAR(20)  NULL,
+    concurrentProblems   TEXT         NULL,
+    urgency              CHAR(2)      NULL,
+    followUpDate         DATE         NULL,
+    signatureImg         VARCHAR(20)  NULL,
+    letterheadName       VARCHAR(20)  NULL,
+    letterheadAddress    TEXT         NULL,
+    letterheadPhone      VARCHAR(50)  NULL,
+    letterheadFax        VARCHAR(50)  NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------- consultationRequestExt
+-- Generic EAV table Phase 1 uses to carry amt.placerOrderId /
+-- amt.fhirServiceRequestId / amt.sourceNode per request.
+-- Indexed on requestId in real Oscar (SHOW INDEX, 2026-08-08) -- replicated
+-- here since the D1 correlation query in the Phase 2 spec depends on this
+-- table being present and indexed.
+CREATE TABLE IF NOT EXISTS consultationRequestExt (
+    id          INT(10)      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    requestId   INT(10)      NOT NULL,
+    name        VARCHAR(100) NOT NULL,
+    value       TEXT         NOT NULL,
+    dateCreated DATE         NOT NULL,
+    KEY idx_consultationRequestExt_requestId (requestId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
