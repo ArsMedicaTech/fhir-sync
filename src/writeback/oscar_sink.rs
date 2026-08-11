@@ -180,11 +180,13 @@ impl OscarTx {
         &mut self,
         existing: Option<&str>,
         row: &AppointmentRow,
+        tz: &Tz,
     ) -> Result<String> {
         let demographic_no = row
             .demographic_no
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("appointment requires demographic_no"))?;
+        let now = now_local(tz);
 
         if let Some(id) = existing {
             let mut sets = Vec::new();
@@ -226,6 +228,10 @@ impl OscarTx {
 
             cols.push("bookingSource".to_string());
             params.push(Value::Bytes(b"OSCAR".to_vec()));
+            cols.push("createdatetime".to_string());
+            params.push(Value::Bytes(now.as_bytes().to_vec()));
+            cols.push("updatedatetime".to_string());
+            params.push(Value::Bytes(now.as_bytes().to_vec()));
             cols.push("lastupdateuser".to_string());
             params.push(Value::Bytes(self.sentinel.as_bytes().to_vec()));
 

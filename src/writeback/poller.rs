@@ -357,7 +357,7 @@ async fn process_resource(
                 tz,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let new_id = tx.write_appointment(existing_id.as_deref(), &row).await?;
+            let new_id = tx.write_appointment(existing_id.as_deref(), &row, tz).await?;
             if existing_id.is_none() {
                 hapi_update_identifier(client, cfg, token, event, &new_id).await?;
             }
