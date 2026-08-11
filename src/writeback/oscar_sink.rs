@@ -536,6 +536,22 @@ impl OscarTx {
             .map(|r| r.0)
             .ok_or_else(|| anyhow::anyhow!("LAST_INSERT_ID() returned no rows"))
     }
+
+    async fn patient_name(&mut self, demographic_no: &str) -> Result<String> {
+        let rows: Vec<(String, String)> = self
+            .conn
+            .exec(
+                "SELECT IFNULL(last_name,''), IFNULL(first_name,'') FROM demographic WHERE demographic_no = ?",
+                Params::Positional(vec![Value::Bytes(demographic_no.as_bytes().to_vec())]),
+            )
+            .await
+            .context("selecting patient name for appointment")?;
+        let (last, first) = rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("demographic_no {demographic_no} not found"))?;
+        Ok(format!("{}, {}", last, first))
+    }
 }
 
 fn now_local(tz: &Tz) -> String {
