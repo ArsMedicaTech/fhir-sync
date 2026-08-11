@@ -172,6 +172,10 @@ pub fn resolve_class(encounter: &DomainEncounter) -> Option<String> {
             warn!("unmapped_encounter_type: '{}' for note_id={}; group variants are not supported", et, encounter.note_id);
             None
         }
+        Some("") => {
+            warn!("empty-string encounter_type for note_id={}; defaulting to AMB", encounter.note_id);
+            Some("AMB".to_string())
+        }
         Some(et) => {
             warn!("unmapped_encounter_type: '{}' for note_id={}", et, encounter.note_id);
             None
