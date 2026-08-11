@@ -1613,6 +1613,8 @@ mod tests {
             region: Some("BC".to_string()),
             appointment_status_map: crate::config::OscarConfig::default().appointment_status_map,
             default_mrp_provider_no: None,
+            default_appointment_location: None,
+            default_appointment_type: None,
             care_team_enabled: true,
             consult_response_status_map: crate::config::OscarConfig::default().consult_response_status_map,
             consult_request_status_map: crate::config::OscarConfig::default().consult_request_status_map,
