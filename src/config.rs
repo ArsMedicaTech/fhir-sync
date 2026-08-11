@@ -50,6 +50,12 @@ pub struct OscarConfig {
     /// When omitted, patients with no usable MRP produce no CareTeam.
     #[serde(default)]
     pub default_mrp_provider_no: Option<String>,
+    /// Default Oscar `appointment.location` for AMT-authored appointments.
+    #[serde(default)]
+    pub default_appointment_location: Option<String>,
+    /// Default Oscar `appointment.type` for AMT-authored appointments.
+    #[serde(default)]
+    pub default_appointment_type: Option<String>,
     /// Master switch for the Oscar → FHIR CareTeam sync.
     #[serde(default = "default_true")]
     pub care_team_enabled: bool,
@@ -75,6 +81,8 @@ impl Default for OscarConfig {
             region: None,
             appointment_status_map: default_appointment_status_map(),
             default_mrp_provider_no: None,
+            default_appointment_location: None,
+            default_appointment_type: None,
             care_team_enabled: true,
             consult_response_status_map: default_consult_response_status_map(),
             consult_request_status_map: default_consult_request_status_map(),
@@ -838,6 +846,16 @@ pub fn validate_writeback(cfg: &Config) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("[writeback] requires [oscar].timezone to be set"))?;
     if tz.parse::<chrono_tz::Tz>().is_err() {
         anyhow::bail!("[oscar] timezone '{tz}' is not a valid IANA timezone");
+    }
+
+    if cfg.oscar.default_mrp_provider_no.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        anyhow::bail!("[writeback] requires [oscar].default_mrp_provider_no");
+    }
+    if cfg.oscar.default_appointment_location.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        anyhow::bail!("[writeback] requires [oscar].default_appointment_location");
+    }
+    if cfg.oscar.default_appointment_type.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        anyhow::bail!("[writeback] requires [oscar].default_appointment_type");
     }
 
     if cfg.writeback.sentinel_update_user.is_empty() || cfg.writeback.sentinel_update_user.len() > 6

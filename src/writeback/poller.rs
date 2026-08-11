@@ -312,7 +312,13 @@ async fn process_resource(
                 }
                 Err(e) => return Err(anyhow::anyhow!("{e}")),
             };
-            let new_id = tx.write_demographic(existing_id.as_deref(), &row, tz).await?;
+            let new_id = tx.write_demographic(
+                existing_id.as_deref(),
+                &row,
+                tz,
+                cfg.oscar.default_mrp_provider_no.as_deref().unwrap_or_default(),
+            )
+            .await?;
             if existing_id.is_none() {
                 hapi_update_identifier(client, cfg, token, event, &new_id).await?;
             }
@@ -357,7 +363,14 @@ async fn process_resource(
                 tz,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let new_id = tx.write_appointment(existing_id.as_deref(), &row, tz).await?;
+            let new_id = tx.write_appointment(
+                existing_id.as_deref(),
+                &row,
+                tz,
+                cfg.oscar.default_appointment_location.as_deref().unwrap_or_default(),
+                cfg.oscar.default_appointment_type.as_deref().unwrap_or_default(),
+            )
+            .await?;
             if existing_id.is_none() {
                 hapi_update_identifier(client, cfg, token, event, &new_id).await?;
             }

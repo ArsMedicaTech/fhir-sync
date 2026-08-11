@@ -72,6 +72,7 @@ impl OscarTx {
         existing: Option<&str>,
         row: &DemographicRow,
         tz: &Tz,
+        default_mrp: &str,
     ) -> Result<String> {
         let now = now_local(tz);
         if let Some(id) = existing {
@@ -150,6 +151,8 @@ impl OscarTx {
             push_col(&mut cols, &mut params, "date_of_birth", row.date_of_birth.as_deref());
             push_col(&mut cols, &mut params, "sex", row.sex.as_deref());
             push_col(&mut cols, &mut params, "patient_status", row.patient_status.as_deref());
+            cols.push("provider_no".to_string());
+            params.push(Value::Bytes(default_mrp.as_bytes().to_vec()));
 
             cols.push("lastUpdateDate".to_string());
             params.push(Value::Bytes(now.as_bytes().to_vec()));
@@ -181,6 +184,8 @@ impl OscarTx {
         existing: Option<&str>,
         row: &AppointmentRow,
         tz: &Tz,
+        default_location: &str,
+        default_type: &str,
     ) -> Result<String> {
         let demographic_no = row
             .demographic_no
@@ -217,6 +222,7 @@ impl OscarTx {
             info!("appointment updated: appointment_no={id}");
             Ok(id.to_string())
         } else {
+            let appt_name = self.patient_name(demographic_no).await?;
             let mut cols = vec!["demographic_no".to_string()];
             let mut params: Vec<Value> = vec![Value::Bytes(demographic_no.as_bytes().to_vec())];
             push_col(&mut cols, &mut params, "provider_no", row.provider_no.as_deref());
@@ -226,12 +232,20 @@ impl OscarTx {
             push_col(&mut cols, &mut params, "status", row.status.as_deref());
             push_col(&mut cols, &mut params, "reason", row.reason.as_deref());
 
+            cols.push("name".to_string());
+            params.push(Value::Bytes(appt_name.as_bytes().to_vec()));
+            cols.push("location".to_string());
+            params.push(Value::Bytes(default_location.as_bytes().to_vec()));
+            cols.push("type".to_string());
+            params.push(Value::Bytes(default_type.as_bytes().to_vec()));
             cols.push("bookingSource".to_string());
             params.push(Value::Bytes(b"OSCAR".to_vec()));
             cols.push("createdatetime".to_string());
             params.push(Value::Bytes(now.as_bytes().to_vec()));
             cols.push("updatedatetime".to_string());
             params.push(Value::Bytes(now.as_bytes().to_vec()));
+            cols.push("creator".to_string());
+            params.push(Value::Bytes(self.sentinel.as_bytes().to_vec()));
             cols.push("lastupdateuser".to_string());
             params.push(Value::Bytes(self.sentinel.as_bytes().to_vec()));
 
