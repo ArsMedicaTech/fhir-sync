@@ -110,7 +110,7 @@ fn default_consult_request_status_map() -> HashMap<String, String> {
 }
 
 fn default_sentinel_update_user() -> String {
-    "999997".to_string()
+    "999998".to_string()
 }
 
 fn default_hapi_resource_types() -> Vec<String> {
