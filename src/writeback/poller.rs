@@ -317,6 +317,7 @@ async fn process_resource(
                 &row,
                 tz,
                 cfg.oscar.default_mrp_provider_no.as_deref().unwrap_or_default(),
+                cfg.oscar.default_program_id.as_deref(),
             )
             .await?;
             if existing_id.is_none() {

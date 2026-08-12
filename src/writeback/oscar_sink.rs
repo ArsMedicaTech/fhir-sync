@@ -89,6 +89,7 @@ impl OscarTx {
         row: &DemographicRow,
         tz: &Tz,
         default_mrp: &str,
+        default_program_id: Option<&str>,
     ) -> Result<String> {
         let now = now_local(tz);
         if let Some(id) = existing {
@@ -189,7 +190,9 @@ impl OscarTx {
 
             let id = self.last_insert_id().await?;
 
-            self.write_admission(&id, default_program_id, default_mrp, tz).await?;
+            if let Some(program_id) = default_program_id {
+                self.write_admission(&demographic_no, program_id, default_mrp, tz).await?;
+            }
             
             info!("demographic inserted: demographic_no={id}");
             Ok(id.to_string())
