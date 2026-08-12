@@ -72,6 +72,12 @@ pub struct OscarConfig {
     /// "Completed"=4). Override here if a given Oscar build's codes differ.
     #[serde(default = "default_consult_request_status_map")]
     pub consult_request_status_map: HashMap<String, String>,
+    /// Oscar `admission.program_id` used when creating the CAISI program
+    /// enrollment row required for a new AMT-authored patient to have
+    /// program-domain access to Encounters and other gated modules.
+    /// Required when `oscar_enabled` is true; there is no safe default
+    /// since valid program IDs are clinic-specific.
+    pub default_program_id: Option<String>,
 }
 
 impl Default for OscarConfig {
