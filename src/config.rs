@@ -598,7 +598,7 @@ fn default_link_conflict_policy() -> ConflictPolicy {
     ConflictPolicy::DeadLetter
 }
 
-const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] = &["Patient", "Practitioner", "Appointment"];
+const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] = &["Patient", "Practitioner", "Appointment", "ServiceRequest"];
 const KNOWN_DISPATCH_OPS: &[&str] = &["upsert", "delete"];
 
 #[derive(Debug, Clone, Deserialize)]
