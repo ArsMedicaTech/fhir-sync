@@ -189,13 +189,14 @@ impl OscarTx {
                 .context("inserting demographic")?;
 
             let id = self.last_insert_id().await?;
+            let demographic_no = id.to_string();
 
             if let Some(program_id) = default_program_id {
                 self.write_admission(&demographic_no, program_id, default_mrp, tz).await?;
             }
             
-            info!("demographic inserted: demographic_no={id}");
-            Ok(id.to_string())
+            info!("demographic inserted: demographic_no={demographic_no}");
+            Ok(demographic_no)
         }
     }
 
