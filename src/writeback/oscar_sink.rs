@@ -61,6 +61,22 @@ pub struct OscarTx {
 }
 
 impl OscarTx {
+    async fn write_admission(&mut self, demographic_no: &str, program_id: &str, provider_no: &str, tz: &Tz) -> Result<()> {
+        let now = now_local(tz);
+        self.conn
+            .exec_drop(
+                "INSERT INTO admission
+                    (client_id, program_id, provider_no, admission_date, admission_status,
+                    discharge_date, admission_from_transfer, discharge_from_transfer,
+                    temporary_admission_flag)
+                VALUES (?, ?, ?, ?, 'current', NULL, 0, 0, 0)",
+                (demographic_no, program_id, provider_no, now.as_str()),
+            )
+            .await
+            .context("inserting admission for program-domain access")?;
+        Ok(())
+    }
+
     /// INSERT or UPDATE a `demographic` row.
     ///
     /// When `existing` is `Some(demographic_no)`, only the allowlisted columns
@@ -172,6 +188,9 @@ impl OscarTx {
                 .context("inserting demographic")?;
 
             let id = self.last_insert_id().await?;
+
+            self.write_admission(&id, default_program_id, default_mrp, tz).await?;
+            
             info!("demographic inserted: demographic_no={id}");
             Ok(id.to_string())
         }
