@@ -169,6 +169,12 @@ async fn poll_one_cycle(
             // Observe-only link: emit and advance. No target reads, no conflict
             // resolution, no writes.
             if target_node.is_none() {
+                let key = format!("{}/{}", event.resource_type, event.id);
+                if cp.last_versionids_seen.get(&key).map(String::as_str) == Some(event.version_id.as_str()) {
+                    cp.since = bump_past(&event.last_updated);
+                    continue;
+                }
+
                 if let Some(tx) = dispatch_tx {
                     let notification = DispatchNotification::from_history_event(
                         &event,
@@ -183,6 +189,7 @@ async fn poll_one_cycle(
                         );
                     }
                 }
+                cp.last_versionids_seen.insert(key, event.version_id.clone());
                 cp.since = bump_past(&event.last_updated);
                 processed += 1;
                 continue;
