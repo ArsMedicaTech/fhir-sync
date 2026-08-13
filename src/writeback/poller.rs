@@ -218,7 +218,7 @@ async fn poll_one_cycle(
                     .insert(key, event.version_id.clone());
             }
 
-            checkpoint.since = event.last_updated.clone();
+            checkpoint.since = bump_past(&event.last_updated);
             save_checkpoint(checkpoint_path, checkpoint).await?;
             processed += 1;
         }
@@ -238,6 +238,15 @@ async fn hapi_token(client: &Client, fhir: &FhirConfig) -> Result<Option<String>
         return Ok(std::env::var(env).ok());
     }
     Ok(None)
+}
+
+/// HAPI's `_since` is inclusive. Nudge one millisecond past the last-seen
+/// timestamp so the same resource isn't re-fetched on the next poll.
+fn bump_past(ts: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(ts) {
+        Ok(dt) => (dt + chrono::Duration::milliseconds(1)).to_rfc3339(),
+        Err(_) => ts.to_string(),
+    }
 }
 
 fn build_history_url(base: &str, since: &str, _count: usize) -> String {
