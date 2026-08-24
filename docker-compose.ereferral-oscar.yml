@@ -1,0 +1,20 @@
+# Local cross-clinic eReferral demo with Oscar as clinic B.
+# Phase 1: ServiceRequest (clinic A) -> HAPI-B -> Oscar consultationRequests.
+#
+#   docker compose -f docker-compose.ereferral-oscar.yml up -d
+#
+# Then author a Patient + ServiceRequest in HAPI-A and watch it flow to Oscar.
+
+services:
+  fhir-sync:
+    image: ${FHIR_SYNC_IMAGE:-ghcr.io/arsmedicatech/fhir-sync:main}
+    environment:
+      CONFIG_PATH: /demo/Config.ereferral-oscar.toml
+      RUST_LOG: info
+      FHIR_SYNC_CLIENT_SECRET: ${FHIR_SYNC_CLIENT_SECRET}
+    volumes:
+      - ./demo/Config.ereferral-oscar.toml:/demo/Config.ereferral-oscar.toml:ro
+      - fhir-sync-ereferral-oscar-state:/var/lib/fhir-sync
+
+volumes:
+  fhir-sync-ereferral-oscar-state:
