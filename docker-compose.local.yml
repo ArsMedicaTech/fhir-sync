@@ -1,0 +1,32 @@
+# Local Oscar -> FHIR. Connects to the running emr/oscar stack.
+# Phase 1: local throwaway HAPI. Phase 2: repoint [fhir] base_url.
+services:
+  hapi:
+    image: hapiproject/hapi:v8.10.0-3
+    ports:
+      - "8083:8080"
+    networks: [oscar-net]
+
+  fhir-sync:
+    image: ghcr.io/arsmedicatech/fhir-sync:${FHIR_SYNC_TAG:-main}
+    environment:
+      CONFIG_PATH: /config/Config.local.toml
+      RUST_LOG: info
+      FHIR_SYNC_CLIENT_SECRET: ${FHIR_SYNC_CLIENT_SECRET:-}
+      DISPATCH_CONSUMER_A_SECRET: ${DISPATCH_CONSUMER_A_SECRET:-}
+    volumes:
+      - ./Config.local.toml:/config/Config.local.toml:ro
+      - fhir-sync-local-state:/var/lib/fhir-sync
+    networks: [oscar-net]
+    ports:
+      - "8092:8080"
+      - "8093:8081"
+      - "50052:50051"
+
+networks:
+  oscar-net:
+    external: true
+    name: oscar_oscar-net   # confirm against `docker network ls`
+
+volumes:
+  fhir-sync-local-state:

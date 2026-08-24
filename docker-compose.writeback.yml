@@ -1,0 +1,78 @@
+# Local AMT -> Oscar write-back harness (compose-local only).
+# Do not point this at fhir.synapticl.com or a live clinic Oscar.
+#
+#   docker compose -f docker-compose.writeback.yml up --build -d
+#
+# Then author a Patient, Appointment, or DocumentReference in the local HAPI
+# and watch it flow into the Oscar MariaDB instance.
+#
+# This stack deliberately has the Oscar -> FHIR CDC enabled at the same time,
+# because the loop-guard acceptance test (no infinite mutation) is only
+# meaningful when both directions are running.
+
+services:
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MYSQL_ROOT_PASSWORD: supersecretroot
+      MYSQL_DATABASE: oscar
+      MYSQL_USER: oscar
+      MYSQL_PASSWORD: oscarpw
+    # Binlog flags matching the real Oscar stack (E2). server-id=1 here,
+    # distinct from fhir-sync's server_id=4321 (F12).
+    command: >
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --binlog-row-image=FULL
+      --server-id=1
+    volumes:
+      - ./demo/seed_oscar.sql:/docker-entrypoint-initdb.d/10_seed_oscar.sql:ro
+      - ./demo/15_oscar_schema.sql:/docker-entrypoint-initdb.d/15_oscar_schema.sql:ro
+      - ./demo/seed_oscar_fixtures.sql:/docker-entrypoint-initdb.d/20_fixtures.sql:ro
+      - ./demo/seed_writeback_grants.sql:/docker-entrypoint-initdb.d/30_writeback_grants.sql:ro
+    ports:
+      - "3318:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # Second, throwaway HAPI instance for the write-back demo — never fhir.synapticl.com
+  # (spec §6 Testing Notes).
+  hapi:
+    image: hapiproject/hapi:v8.10.0-3
+    environment:
+      - hapi.fhir.fhir_version=R4
+    ports:
+      - "8084:8080"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  fhir-sync:
+    #build:
+    #  #context: .
+    #  #dockerfile: Dockerfile
+    #Using CI build for compute constraint reasons.
+    image: ${FHIR_SYNC_IMAGE:-ghcr.io/arsmedicatech/fhir-sync:main}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      hapi:
+        condition: service_started
+    environment:
+      CONFIG_PATH: /demo/Config.writeback.toml
+      RUST_LOG: info
+      FHIR_SYNC_CLIENT_SECRET: ${FHIR_SYNC_CLIENT_SECRET:-}
+    volumes:
+      - ./demo/Config.writeback.toml:/demo/Config.writeback.toml:ro
+      - fhir-sync-writeback-state:/var/lib/fhir-sync
+    ports:
+      - "8094:8080"
+      - "8095:8081"
+      - "50055:50051"
+
+volumes:
+  fhir-sync-writeback-state:
