@@ -5,7 +5,7 @@ use fhirbolt::model::r4b::resources::{
     Bundle, BundleEntry, BundleEntryRequest, Condition, ConditionAbatement, ConditionOnset,
     DiagnosticReport, DiagnosticReportEffective, DocumentReference, DocumentReferenceContent,
     DocumentReferenceContext, Encounter, EncounterParticipant, FamilyMemberHistory,
-    FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset, ServiceRequest,
+    FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset, ServiceRequest, Task,
 };
 use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
@@ -17,6 +17,7 @@ use crate::domain::condition::{DomainCondition, DomainFamilyMemberHistory};
 use crate::domain::diagnostic_report::DomainDiagnosticReport;
 use crate::domain::document_reference::DomainDocumentReference;
 use crate::domain::encounter::DomainEncounter;
+use crate::domain::referral_task::DomainReferralTask;
 use crate::domain::service_request::DomainServiceRequest;
 use crate::event::{Op, ResourceType};
 
@@ -27,6 +28,9 @@ const PARTICIPATION_TYPE_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/v
 const CONDITION_CLINICAL_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/condition-clinical";
 const CONDITION_VERIFICATION_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/condition-ver-status";
 const UOM_SYSTEM: &str = "http://unitsofmeasure.org";
+const REFERRAL_BUSINESS_STATUS_SYSTEM: &str =
+    "https://fhir.infoway-inforoute.ca/CodeSystem/ca-referralbusinessstatus";
+const REFERRAL_BUSINESS_STATUS_VERSION: &str = "1.2.0";
 
 // ---------------------------------------------------------------------------
 // Public sync entry points called from `fhir.rs` `sync_one`.
@@ -156,21 +160,28 @@ pub(super) async fn sync_service_request(
     token: Option<String>,
     event: &SyncEvent,
     request: &DomainServiceRequest,
-    oscar_cfg: &OscarConfig,
 ) -> Result<FhirResult, SyncFailure> {
-    let fhir_request = build_service_request(request, fhir_cfg, oscar_cfg, event.op())?;
-    let bundle = build_conditional_put_bundle(
+    let fhir_request = build_service_request(request, fhir_cfg, event.op())?;
+    let bundle = build_conditional_create_bundle(
         FhirResource::ServiceRequest(Box::new(fhir_request)),
         &fhir_cfg.oscar_consult_request_system,
         event,
     );
-    let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
-    let identifier = format!("{}|{}", fhir_cfg.oscar_consult_request_system, event.payload().source_id());
-    info!(
-        "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
-    );
-    Ok(result)
+    send_transaction_bundle(client, fhir_cfg, token, &bundle).await
+}
+
+pub(super) async fn sync_referral_task(
+    client: &reqwest::Client,
+    fhir_cfg: &FhirConfig,
+    token: Option<String>,
+    event: &SyncEvent,
+    task: &DomainReferralTask,
+    oscar_cfg: &OscarConfig,
+) -> Result<FhirResult, SyncFailure> {
+    let fhir_task = build_referral_task(task, fhir_cfg, oscar_cfg, event.op())?;
+    let stub = build_referral_task_service_request(task, fhir_cfg, event.op());
+    let bundle = build_referral_task_bundle(stub, fhir_task, fhir_cfg, event);
+    send_transaction_bundle(client, fhir_cfg, token, &bundle).await
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +205,67 @@ fn build_conditional_put_bundle(
         request: Some(BundleEntryRequest {
             method: "PUT".into(),
             url: conditional_url.into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    bundle
+}
+
+fn build_conditional_create_bundle(
+    fhir_resource: FhirResource,
+    identifier_system: &str,
+    event: &SyncEvent,
+) -> Bundle {
+    let sys: String = url::form_urlencoded::byte_serialize(identifier_system.as_bytes()).collect();
+    let val: String =
+        url::form_urlencoded::byte_serialize(event.payload().source_id().as_bytes()).collect();
+    let mut bundle = Bundle::default();
+    bundle.r#type = "transaction".into();
+    bundle.entry.push(BundleEntry {
+        resource: Some(fhir_resource),
+        request: Some(BundleEntryRequest {
+            method: "POST".into(),
+            url: event.resource_type().as_path().into(),
+            if_none_exist: Some(format!("identifier={sys}|{val}").into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    bundle
+}
+
+fn build_referral_task_bundle(
+    service_request: ServiceRequest,
+    task: Task,
+    fhir_cfg: &FhirConfig,
+    event: &SyncEvent,
+) -> Bundle {
+    let request_id = event.payload().source_id();
+    let sr_sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_consult_request_system.as_bytes())
+            .collect();
+    let task_sys: String =
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_consult_task_system.as_bytes())
+            .collect();
+    let val: String = url::form_urlencoded::byte_serialize(request_id.as_bytes()).collect();
+    let mut bundle = Bundle::default();
+    bundle.r#type = "transaction".into();
+    bundle.entry.push(BundleEntry {
+        resource: Some(FhirResource::ServiceRequest(Box::new(service_request))),
+        request: Some(BundleEntryRequest {
+            method: "POST".into(),
+            url: "ServiceRequest".into(),
+            if_none_exist: Some(format!("identifier={sr_sys}|{val}").into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    bundle.entry.push(BundleEntry {
+        resource: Some(FhirResource::Task(Box::new(task))),
+        request: Some(BundleEntryRequest {
+            method: "PUT".into(),
+            url: format!("Task?identifier={task_sys}|{val}").into(),
             ..Default::default()
         }),
         ..Default::default()
@@ -790,21 +862,111 @@ fn build_diagnostic_report(
     Ok(dr)
 }
 
-/// Builds a full replacement `ServiceRequest` from an Oscar `consultationRequests`
-/// row and PUTs it back over the same resource AMT originally created
-/// (keyed on `oscar_consult_request_system` + `requestId`). This resyncs
-/// status changes a human makes in Oscar's own consult UI (Nothing / Pending
-/// Specialist Callback / Pending Patient Callback / Completed) back into AMT.
-///
-/// Because this is a full-resource conditional PUT (matching the pattern
-/// used for every other Oscar -> AMT resource in this file), the row must
-/// carry enough fields to reconstruct an equivalent resource, not just the
-/// status delta -- otherwise fields AMT set originally (code, subject,
-/// requester) would be dropped by HAPI on replace.
+fn build_referral_task(
+    referral: &DomainReferralTask,
+    fhir_cfg: &FhirConfig,
+    oscar_cfg: &OscarConfig,
+    op: Op,
+) -> Result<Task, SyncFailure> {
+    let status = if op == Op::Delete {
+        "cancelled"
+    } else {
+        oscar_cfg
+            .consult_request_task_status_map
+            .get(&referral.oscar_status)
+            .map(String::as_str)
+            .ok_or_else(|| {
+                SyncFailure::Permanent(anyhow::anyhow!(
+                    "unmapped consultationRequests status '{}' for requestId={}",
+                    referral.oscar_status,
+                    referral.request_id
+                ))
+            })?
+    };
+    let mut task = Task::default();
+    task.meta = Some(Box::new(Meta {
+        source: Some(META_SOURCE.into()),
+        ..Default::default()
+    }));
+    task.identifier.push(Identifier {
+        system: Some(fhir_cfg.oscar_consult_task_system.clone().into()),
+        value: Some(referral.request_id.clone().into()),
+        ..Default::default()
+    });
+    task.status = status.into();
+    task.intent = "proposal".into();
+    task.code = Some(Box::new(CodeableConcept {
+        coding: vec![Coding {
+            code: Some("process-request".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }));
+    task.based_on.push(Reference {
+        reference: Some(
+            format!(
+                "ServiceRequest?identifier={}|{}",
+                fhir_cfg.oscar_consult_request_system, referral.request_id
+            )
+            .into(),
+        ),
+        ..Default::default()
+    });
+    task.r#for = Some(Box::new(patient_ref(fhir_cfg, &referral.demographic_no)));
+    if let Some(provider_no) = &referral.provider_no {
+        task.owner = Some(Box::new(practitioner_ref(fhir_cfg, provider_no)));
+    }
+    if op != Op::Delete {
+        if let Some(code) = oscar_cfg
+            .consult_request_business_status_map
+            .get(&referral.oscar_status)
+        {
+            task.business_status = Some(Box::new(CodeableConcept {
+                coding: vec![Coding {
+                    system: Some(REFERRAL_BUSINESS_STATUS_SYSTEM.into()),
+                    version: Some(REFERRAL_BUSINESS_STATUS_VERSION.into()),
+                    code: Some(code.clone().into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }));
+        }
+    }
+    Ok(task)
+}
+
+fn build_referral_task_service_request(
+    referral: &DomainReferralTask,
+    fhir_cfg: &FhirConfig,
+    op: Op,
+) -> ServiceRequest {
+    let mut sr = ServiceRequest::default();
+    sr.meta = Some(Box::new(Meta {
+        source: Some(META_SOURCE.into()),
+        ..Default::default()
+    }));
+    sr.identifier.push(Identifier {
+        system: Some(fhir_cfg.oscar_consult_request_system.clone().into()),
+        value: Some(referral.request_id.clone().into()),
+        ..Default::default()
+    });
+    sr.status = if op == Op::Delete {
+        "revoked"
+    } else {
+        "active"
+    }
+    .into();
+    sr.intent = "order".into();
+    sr.subject = Box::new(patient_ref(fhir_cfg, &referral.demographic_no));
+    if let Some(provider_no) = &referral.provider_no {
+        sr.requester = Some(Box::new(practitioner_ref(fhir_cfg, provider_no)));
+    }
+    sr
+}
+
 fn build_service_request(
     req: &DomainServiceRequest,
     fhir_cfg: &FhirConfig,
-    oscar_cfg: &OscarConfig,
     op: Op,
 ) -> Result<ServiceRequest, SyncFailure> {
     let mut sr = ServiceRequest::default();
@@ -822,30 +984,19 @@ fn build_service_request(
 
     sr.intent = "order".into();
 
-    let raw_status = req.status.as_deref();
-
-    let fhir_status = if op == Op::Delete {
+    sr.status = if op == Op::Delete {
         "revoked"
     } else {
-        match raw_status {
-            Some(code) => oscar_cfg
-                .consult_request_status_map
-                .get(code)
-                .map(String::as_str)
-                .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("unmapped consult request status: {code}")))?,
-            // No status column value yet (e.g. brand new row) -> AMT's own
-            // default expectation for a freshly authored request.
-            None => "active",
-        }
-    };
-    sr.status = fhir_status.into();
+        "active"
+    }
+    .into();
 
-    let demographic_no = req
-        .demographic_no
-        .as_deref()
-        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!(
-            "requestId={} has no demographicNo", req.request_id
-        )))?;
+    let demographic_no = req.demographic_no.as_deref().ok_or_else(|| {
+        SyncFailure::Permanent(anyhow::anyhow!(
+            "requestId={} has no demographicNo",
+            req.request_id
+        ))
+    })?;
     sr.subject = Box::new(patient_ref(fhir_cfg, demographic_no));
 
     if let Some(provider_no) = &req.provider_no {
@@ -975,4 +1126,73 @@ fn to_appointment_instant_rfc3339(
         .as_deref()
         .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("missing oscar timezone")))?;
     super::to_appointment_instant(date, time, tz_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn referral(status: &str) -> DomainReferralTask {
+        DomainReferralTask {
+            request_id: "15".to_string(),
+            demographic_no: "116".to_string(),
+            provider_no: Some("999998".to_string()),
+            oscar_status: status.to_string(),
+        }
+    }
+
+    #[test]
+    fn referral_task_uses_ca_erec_shape() {
+        let cfg = FhirConfig::default();
+        let task =
+            build_referral_task(&referral("2"), &cfg, &OscarConfig::default(), Op::Upsert).unwrap();
+        assert_eq!(task.status.value.as_deref(), Some("in-progress"));
+        assert_eq!(task.intent.value.as_deref(), Some("proposal"));
+        assert!(task.focus.is_none());
+        assert_eq!(task.based_on.len(), 1);
+        assert_eq!(
+            task.code.as_ref().unwrap().coding[0]
+                .code
+                .as_ref()
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("process-request")
+        );
+        assert_eq!(
+            task.business_status.as_ref().unwrap().coding[0]
+                .code
+                .as_ref()
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("awaiting-booking")
+        );
+    }
+
+    #[test]
+    fn completed_referral_omits_business_status() {
+        let task = build_referral_task(
+            &referral("4"),
+            &FhirConfig::default(),
+            &OscarConfig::default(),
+            Op::Upsert,
+        )
+        .unwrap();
+        assert_eq!(task.status.value.as_deref(), Some("completed"));
+        assert!(task.business_status.is_none());
+    }
+
+    #[test]
+    fn unknown_referral_status_is_permanent_failure() {
+        let err = build_referral_task(
+            &referral("99"),
+            &FhirConfig::default(),
+            &OscarConfig::default(),
+            Op::Upsert,
+        )
+        .unwrap_err();
+        assert!(matches!(err, SyncFailure::Permanent(_)));
+        assert!(err.to_string().contains("requestId=15"));
+    }
 }

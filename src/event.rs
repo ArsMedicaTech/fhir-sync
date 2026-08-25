@@ -63,6 +63,7 @@ pub enum ResourceType {
     FamilyMemberHistory,
     CareTeam,
     ServiceRequest,
+    Task,
 }
 
 impl ResourceType {
@@ -79,6 +80,7 @@ impl ResourceType {
             ResourceType::FamilyMemberHistory => "FamilyMemberHistory",
             ResourceType::CareTeam => "CareTeam",
             ResourceType::ServiceRequest => "ServiceRequest",
+            ResourceType::Task => "Task",
         }
     }
 
@@ -95,6 +97,7 @@ impl ResourceType {
             ResourceType::FamilyMemberHistory => "FamilyMemberHistory",
             ResourceType::CareTeam => "CareTeam",
             ResourceType::ServiceRequest => "ServiceRequest",
+            ResourceType::Task => "Task",
         }
     }
 }

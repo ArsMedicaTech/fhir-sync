@@ -64,14 +64,14 @@ pub struct OscarConfig {
     /// defaulting.
     #[serde(default = "default_consult_response_status_map")]
     pub consult_response_status_map: HashMap<String, String>,
-    /// Oscar `consultationRequests.status` -> FHIR `ServiceRequest.status`,
-    /// for resyncing status changes made in Oscar's own consult UI back to
-    /// AMT. Defaults reflect the four Status radio options in Oscar's
-    /// ConsultationFormRequest.jsp (confirmed live: "Nothing"=1, "Pending
-    /// Specialist Callback"=2, "Pending Patient Callback"=3,
-    /// "Completed"=4). Override here if a given Oscar build's codes differ.
-    #[serde(default = "default_consult_request_status_map")]
-    pub consult_request_status_map: HashMap<String, String>,
+    /// Oscar `consultationRequests.status` -> FHIR `Task.status`.
+    #[serde(default = "default_consult_request_task_status_map")]
+    pub consult_request_task_status_map: HashMap<String, String>,
+    /// Oscar `consultationRequests.status` -> CA:eReC `businessStatus` code.
+    #[serde(default = "default_consult_request_business_status_map")]
+    pub consult_request_business_status_map: HashMap<String, String>,
+    #[serde(default)]
+    pub consult_request_status_map: Option<HashMap<String, String>>,
     /// Oscar `admission.program_id` used when creating the CAISI program
     /// enrollment row required for a new AMT-authored patient to have
     /// program-domain access to Encounters and other gated modules.
@@ -92,7 +92,9 @@ impl Default for OscarConfig {
             default_program_id: None,
             care_team_enabled: true,
             consult_response_status_map: default_consult_response_status_map(),
-            consult_request_status_map: default_consult_request_status_map(),
+            consult_request_task_status_map: default_consult_request_task_status_map(),
+            consult_request_business_status_map: default_consult_request_business_status_map(),
+            consult_request_status_map: None,
         }
     }
 }
@@ -115,13 +117,21 @@ fn default_consult_response_status_map() -> HashMap<String, String> {
     HashMap::new()
 }
 
-fn default_consult_request_status_map() -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    m.insert("1".to_string(), "active".to_string()); // Nothing (not yet actioned)
-    m.insert("2".to_string(), "active".to_string()); // Pending Specialist Callback
-    m.insert("3".to_string(), "on-hold".to_string()); // Pending Patient Callback
-    m.insert("4".to_string(), "completed".to_string()); // Completed
-    m
+fn default_consult_request_task_status_map() -> HashMap<String, String> {
+    HashMap::from([
+        ("1".to_string(), "received".to_string()),
+        ("2".to_string(), "in-progress".to_string()),
+        ("3".to_string(), "in-progress".to_string()),
+        ("4".to_string(), "completed".to_string()),
+    ])
+}
+
+fn default_consult_request_business_status_map() -> HashMap<String, String> {
+    HashMap::from([
+        ("1".to_string(), "awaiting-triage".to_string()),
+        ("2".to_string(), "awaiting-booking".to_string()),
+        ("3".to_string(), "booked".to_string()),
+    ])
 }
 
 fn default_sentinel_update_user() -> String {
@@ -309,6 +319,8 @@ pub struct FhirConfig {
     pub oscar_appointment_system: String,
     #[serde(default = "default_oscar_consult_request_system")]
     pub oscar_consult_request_system: String,
+    #[serde(default = "default_oscar_consult_task_system")]
+    pub oscar_consult_task_system: String,
     #[serde(default = "default_oscar_care_team_system")]
     pub oscar_care_team_system: String,
     #[serde(default = "default_oscar_note_system")]
@@ -344,6 +356,7 @@ impl Default for FhirConfig {
             oscar_provider_system: default_oscar_provider_system(),
             oscar_appointment_system: default_oscar_appointment_system(),
             oscar_consult_request_system: default_oscar_consult_request_system(),
+            oscar_consult_task_system: default_oscar_consult_task_system(),
             oscar_care_team_system: default_oscar_care_team_system(),
             oscar_note_system: default_oscar_note_system(),
             oscar_note_revision_system: default_oscar_note_revision_system(),
@@ -379,6 +392,10 @@ fn default_oscar_appointment_system() -> String {
 
 fn default_oscar_consult_request_system() -> String {
     "https://arsmedicatech.com/fhir/sid/oscar-consult-request".to_string()
+}
+
+fn default_oscar_consult_task_system() -> String {
+    "https://arsmedicatech.com/fhir/identifier/oscar-consult-task".to_string()
 }
 
 fn default_oscar_care_team_system() -> String {
@@ -826,8 +843,16 @@ pub fn validate_oscar(cfg: &Config) -> anyhow::Result<()> {
 
     // Status map values must be valid FHIR Appointment.status codes.
     const VALID_STATUS: &[&str] = &[
-        "proposed", "pending", "booked", "arrived", "fulfilled", "cancelled", "noshow",
-        "entered-in-error", "checked-in", "waitlist",
+        "proposed",
+        "pending",
+        "booked",
+        "arrived",
+        "fulfilled",
+        "cancelled",
+        "noshow",
+        "entered-in-error",
+        "checked-in",
+        "waitlist",
     ];
     for (code, status) in &cfg.oscar.appointment_status_map {
         if !VALID_STATUS.iter().any(|v| v.eq_ignore_ascii_case(status)) {
@@ -878,8 +903,16 @@ pub fn validate_writeback(cfg: &Config) -> anyhow::Result<()> {
     }
 
     const VALID_STATUS: &[&str] = &[
-        "proposed", "pending", "booked", "arrived", "fulfilled", "cancelled", "noshow",
-        "entered-in-error", "checked-in", "waitlist",
+        "proposed",
+        "pending",
+        "booked",
+        "arrived",
+        "fulfilled",
+        "cancelled",
+        "noshow",
+        "entered-in-error",
+        "checked-in",
+        "waitlist",
     ];
     for (fhir, oscar) in &cfg.writeback.appointment_status_map {
         if !VALID_STATUS.iter().any(|v| v.eq_ignore_ascii_case(fhir)) {
@@ -911,6 +944,10 @@ pub fn load_config() -> anyhow::Result<Config> {
     let toml_str = fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("failed to read config at {path}: {e}"))?;
     let mut config: Config = toml::from_str(&toml_str)?;
+
+    if config.oscar.consult_request_status_map.is_some() {
+        tracing::warn!("[oscar].consult_request_status_map is deprecated and ignored; use consult_request_task_status_map and consult_request_business_status_map");
+    }
 
     if let Ok(v) = env::var("FHIR_SYNC_HEALTH_PORT") {
         config.server.health_port = v.parse()?;
@@ -1078,7 +1115,11 @@ mod tests {
                 default_program_id: None,
                 care_team_enabled: true,
                 consult_response_status_map: OscarConfig::default().consult_response_status_map,
-                consult_request_status_map: OscarConfig::default().consult_request_status_map,
+                consult_request_task_status_map: OscarConfig::default()
+                    .consult_request_task_status_map,
+                consult_request_business_status_map: OscarConfig::default()
+                    .consult_request_business_status_map,
+                consult_request_status_map: None,
             },
             debug: None,
             writeback: WritebackConfig::default(),
@@ -1107,12 +1148,42 @@ mod tests {
                 default_program_id: None,
                 care_team_enabled: true,
                 consult_response_status_map: OscarConfig::default().consult_response_status_map,
-                consult_request_status_map: OscarConfig::default().consult_request_status_map,
+                consult_request_task_status_map: OscarConfig::default()
+                    .consult_request_task_status_map,
+                consult_request_business_status_map: OscarConfig::default()
+                    .consult_request_business_status_map,
+                consult_request_status_map: None,
             },
             debug: None,
             writeback: WritebackConfig::default(),
         };
         assert!(validate_oscar(&cfg).is_ok());
+    }
+
+    #[test]
+    fn default_consult_request_status_pairs_match_ca_erec() {
+        // Source of truth: amt_nano/terminology/referral_business_statuses.py.
+        let cfg = OscarConfig::default();
+        let expected = [
+            ("1", "received", Some("awaiting-triage")),
+            ("2", "in-progress", Some("awaiting-booking")),
+            ("3", "in-progress", Some("booked")),
+            ("4", "completed", None),
+        ];
+        for (code, status, business_status) in expected {
+            assert_eq!(
+                cfg.consult_request_task_status_map
+                    .get(code)
+                    .map(String::as_str),
+                Some(status)
+            );
+            assert_eq!(
+                cfg.consult_request_business_status_map
+                    .get(code)
+                    .map(String::as_str),
+                business_status
+            );
+        }
     }
 
     #[test]

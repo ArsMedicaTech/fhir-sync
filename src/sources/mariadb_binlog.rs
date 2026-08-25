@@ -31,9 +31,10 @@ use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
 use crate::mapping::care_team::row_to_domain_care_team;
 use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
+use crate::mapping::consultation_request::{
+    row_to_domain_referral_task, row_to_domain_service_request,
+};
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
-use crate::mapping::consultation_request::row_to_domain_service_request;
-use crate::mapping::consultation_response::row_to_domain_diagnostic_report;
 use crate::mapping::dxresearch::row_to_domain_condition;
 use crate::mapping::provider::row_to_domain_practitioner;
 use crate::metrics::SharedMetrics;
@@ -45,7 +46,6 @@ const PROVIDER_TABLE: &str = "provider";
 const APPOINTMENT_TABLE: &str = "appointment";
 const CASEMGMT_NOTE_TABLE: &str = "casemgmt_note";
 const DXRESEARCH_TABLE: &str = "dxresearch";
-const CONSULTATION_RESPONSE_TABLE: &str = "consultationResponse";
 const CONSULTATION_REQUESTS_TABLE: &str = "consultationRequests";
 const MAX_CONSECUTIVE_READ_ERRORS: u32 = 5;
 const READ_ERROR_BACKOFF_MS: u64 = 100;
@@ -83,10 +83,6 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
     column_maps.insert(
         DXRESEARCH_TABLE.to_string(),
         resolve_column_map_for_table(&db, DXRESEARCH_TABLE).await?,
-    );
-    column_maps.insert(
-        CONSULTATION_RESPONSE_TABLE.to_string(),
-        resolve_column_map_for_table(&db, CONSULTATION_RESPONSE_TABLE).await?,
     );
     column_maps.insert(
         CONSULTATION_REQUESTS_TABLE.to_string(),
@@ -348,23 +344,33 @@ async fn emit_row(
             }
             out
         }
-        DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns).into_iter().map(DomainResource::Patient).collect(),
-        PROVIDER_TABLE => row_to_domain_practitioner(&change, columns).into_iter().map(DomainResource::Practitioner).collect(),
-        APPOINTMENT_TABLE => row_to_domain_appointment(&change, columns).into_iter().map(DomainResource::Appointment).collect(),
-        CASEMGMT_NOTE_TABLE => row_to_casemgmt_note_resources(&change, columns, None),
-        DXRESEARCH_TABLE => row_to_domain_condition(&change, columns).into_iter().map(DomainResource::Condition).collect(),
-        CONSULTATION_RESPONSE_TABLE => match row_to_domain_diagnostic_report(&change, columns, &cfg.database).await {
-            Ok(Some(report)) => vec![DomainResource::DiagnosticReport(report)],
-            Ok(None) => Vec::new(),
-            Err(e) => {
-                warn!("mariadb_binlog: failed to map consultationResponse row: {e:?}");
-                Vec::new()
-            }
-        },
-        CONSULTATION_REQUESTS_TABLE => row_to_domain_service_request(&change, columns)
+        DEMOGRAPHIC_MERGED_TABLE => row_to_merged_patient(&change, columns)
             .into_iter()
-            .map(DomainResource::ServiceRequest)
+            .map(DomainResource::Patient)
             .collect(),
+        PROVIDER_TABLE => row_to_domain_practitioner(&change, columns)
+            .into_iter()
+            .map(DomainResource::Practitioner)
+            .collect(),
+        APPOINTMENT_TABLE => row_to_domain_appointment(&change, columns)
+            .into_iter()
+            .map(DomainResource::Appointment)
+            .collect(),
+        CASEMGMT_NOTE_TABLE => row_to_casemgmt_note_resources(&change, columns, None),
+        DXRESEARCH_TABLE => row_to_domain_condition(&change, columns)
+            .into_iter()
+            .map(DomainResource::Condition)
+            .collect(),
+        CONSULTATION_REQUESTS_TABLE => {
+            let mut out: Vec<DomainResource> = row_to_domain_service_request(&change, columns)
+                .into_iter()
+                .map(DomainResource::ServiceRequest)
+                .collect();
+            out.extend(
+                row_to_domain_referral_task(&change, columns).map(DomainResource::ReferralTask),
+            );
+            out
+        }
         _ => return true,
     };
 
@@ -397,7 +403,6 @@ fn is_target_table(tables: &HashMap<u64, TableRef>, table_id: u64, schema: &str)
                 || t.table == APPOINTMENT_TABLE
                 || t.table == CASEMGMT_NOTE_TABLE
                 || t.table == DXRESEARCH_TABLE
-                || t.table == CONSULTATION_RESPONSE_TABLE
                 || t.table == CONSULTATION_REQUESTS_TABLE)
         {
             Some(t.table.clone())

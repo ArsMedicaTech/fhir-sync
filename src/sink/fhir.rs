@@ -226,9 +226,19 @@ fn build_put_request(
             };
             (sys, c.source_id.as_str())
         }
-        DomainResource::FamilyMemberHistory(f) => (&fhir_cfg.oscar_cpp_condition_system, f.note_id.as_str()),
-        DomainResource::CareTeam(c) => (&fhir_cfg.oscar_care_team_system, c.demographic_no.as_str()),
-        DomainResource::ServiceRequest(r) => (&fhir_cfg.oscar_consult_request_system, r.request_id.as_str()),
+        DomainResource::FamilyMemberHistory(f) => {
+            (&fhir_cfg.oscar_cpp_condition_system, f.note_id.as_str())
+        }
+        DomainResource::CareTeam(c) => {
+            (&fhir_cfg.oscar_care_team_system, c.demographic_no.as_str())
+        }
+        DomainResource::ServiceRequest(r) => (
+            &fhir_cfg.oscar_consult_request_system,
+            r.request_id.as_str(),
+        ),
+        DomainResource::ReferralTask(t) => {
+            (&fhir_cfg.oscar_consult_task_system, t.request_id.as_str())
+        }
     };
     let identifier = format!("{}|{}", identifier_system, source_id);
 
@@ -288,7 +298,10 @@ async fn sync_one(
             oscar2::sync_diagnostic_report(client, fhir_cfg, token, event, report, &cfg.oscar).await
         }
         DomainResource::ServiceRequest(request) => {
-            oscar2::sync_service_request(client, fhir_cfg, token, event, request, &cfg.oscar).await
+            oscar2::sync_service_request(client, fhir_cfg, token, event, request).await
+        }
+        DomainResource::ReferralTask(task) => {
+            oscar2::sync_referral_task(client, fhir_cfg, token, event, task, &cfg.oscar).await
         }
     }
 }
@@ -1617,8 +1630,13 @@ mod tests {
             default_appointment_type: None,
             default_program_id: None,
             care_team_enabled: true,
-            consult_response_status_map: crate::config::OscarConfig::default().consult_response_status_map,
-            consult_request_status_map: crate::config::OscarConfig::default().consult_request_status_map,
+            consult_response_status_map: crate::config::OscarConfig::default()
+                .consult_response_status_map,
+            consult_request_task_status_map: crate::config::OscarConfig::default()
+                .consult_request_task_status_map,
+            consult_request_business_status_map: crate::config::OscarConfig::default()
+                .consult_request_business_status_map,
+            consult_request_status_map: None,
         }
     }
 

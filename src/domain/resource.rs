@@ -6,6 +6,7 @@ use crate::domain::document_reference::DomainDocumentReference;
 use crate::domain::encounter::DomainEncounter;
 use crate::domain::patient::DomainPatient;
 use crate::domain::practitioner::DomainPractitioner;
+use crate::domain::referral_task::DomainReferralTask;
 use crate::domain::service_request::DomainServiceRequest;
 use crate::event::ResourceType;
 
@@ -22,6 +23,7 @@ pub enum DomainResource {
     FamilyMemberHistory(DomainFamilyMemberHistory),
     CareTeam(DomainCareTeam),
     ServiceRequest(DomainServiceRequest),
+    ReferralTask(DomainReferralTask),
 }
 
 impl DomainResource {
@@ -38,6 +40,7 @@ impl DomainResource {
             DomainResource::FamilyMemberHistory(_) => ResourceType::FamilyMemberHistory,
             DomainResource::CareTeam(_) => ResourceType::CareTeam,
             DomainResource::ServiceRequest(_) => ResourceType::ServiceRequest,
+            DomainResource::ReferralTask(_) => ResourceType::Task,
         }
     }
 
@@ -55,6 +58,7 @@ impl DomainResource {
             DomainResource::FamilyMemberHistory(f) => &f.note_id,
             DomainResource::CareTeam(c) => &c.demographic_no,
             DomainResource::ServiceRequest(r) => &r.request_id,
+            DomainResource::ReferralTask(t) => &t.request_id,
         }
     }
 
@@ -73,7 +77,9 @@ impl DomainResource {
             },
             DomainResource::FamilyMemberHistory(_) => "casemgmt_note",
             DomainResource::CareTeam(_) => "demographic",
-            DomainResource::ServiceRequest(_) => "consultationRequests",
+            DomainResource::ServiceRequest(_) | DomainResource::ReferralTask(_) => {
+                "consultationRequests"
+            }
         }
     }
 }

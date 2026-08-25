@@ -69,7 +69,10 @@ mod tests {
             default_program_id: None,
             care_team_enabled: true,
             consult_response_status_map: OscarConfig::default().consult_response_status_map,
-            consult_request_status_map: OscarConfig::default().consult_request_status_map,
+            consult_request_task_status_map: OscarConfig::default().consult_request_task_status_map,
+            consult_request_business_status_map: OscarConfig::default()
+                .consult_request_business_status_map,
+            consult_request_status_map: None,
         }
     }
 

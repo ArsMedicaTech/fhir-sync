@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use tracing::info;
 
+use crate::domain::referral_task::DomainReferralTask;
 use crate::domain::service_request::DomainServiceRequest;
 use crate::mapping::syncable_provider;
 use crate::sources::RowChange;
@@ -76,6 +77,22 @@ pub fn row_to_domain_service_request(change: &RowChange, columns: &ColumnMap) ->
     })
 }
 
+pub fn row_to_domain_referral_task(
+    change: &RowChange,
+    columns: &ColumnMap,
+) -> Option<DomainReferralTask> {
+    let request_id = lookup(change, columns, "requestId")?.to_string();
+    let demographic_no = lookup(change, columns, "demographicNo")?.to_string();
+    let oscar_status = lookup(change, columns, "status")?.to_string();
+
+    Some(DomainReferralTask {
+        request_id,
+        demographic_no,
+        provider_no: syncable_provider(lookup(change, columns, "providerNo")),
+        oscar_status,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +145,20 @@ mod tests {
         assert_eq!(r.demographic_no, Some("118".to_string()));
         assert_eq!(r.provider_no, Some("999998".to_string()));
         assert_eq!(r.status, Some("4".to_string()));
+    }
+
+    #[test]
+    fn maps_referral_task_from_same_row() {
+        let cols = columns(&["requestId", "demographicNo", "providerNo", "status"]);
+        let task = row_to_domain_referral_task(
+            &change(vec![Some("13"), Some("118"), Some("999998"), Some("3")]),
+            &cols,
+        )
+        .unwrap();
+        assert_eq!(task.request_id, "13");
+        assert_eq!(task.demographic_no, "118");
+        assert_eq!(task.provider_no, Some("999998".to_string()));
+        assert_eq!(task.oscar_status, "3");
     }
 
     #[test]
