@@ -7,10 +7,10 @@ use fhirbolt::model::r4b::resources::{
     DocumentReferenceContext, Encounter, EncounterParticipant, FamilyMemberHistory,
     FamilyMemberHistoryCondition, FamilyMemberHistoryConditionOnset, ServiceRequest, Task,
 };
-use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
     Age, Annotation, Attachment, CodeableConcept, Coding, Identifier, Meta, Period, Reference,
 };
+use fhirbolt::model::r4b::Resource as FhirResource;
 use tracing::{info, warn};
 
 use crate::domain::condition::{DomainCondition, DomainFamilyMemberHistory};
@@ -21,12 +21,17 @@ use crate::domain::referral_task::DomainReferralTask;
 use crate::domain::service_request::DomainServiceRequest;
 use crate::event::{Op, ResourceType};
 
-use super::{FhirConfig, FhirResult, OscarConfig, SyncEvent, SyncFailure, parse_location_id, parse_location_version_id, META_SOURCE};
+use super::{
+    parse_location_id, parse_location_version_id, FhirConfig, FhirResult, OscarConfig, SyncEvent,
+    SyncFailure, META_SOURCE,
+};
 
 const ACT_CODE_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/v3-ActCode";
-const PARTICIPATION_TYPE_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/v3-ParticipationType";
+const PARTICIPATION_TYPE_SYSTEM: &str =
+    "http://terminology.hl7.org/CodeSystem/v3-ParticipationType";
 const CONDITION_CLINICAL_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/condition-clinical";
-const CONDITION_VERIFICATION_SYSTEM: &str = "http://terminology.hl7.org/CodeSystem/condition-ver-status";
+const CONDITION_VERIFICATION_SYSTEM: &str =
+    "http://terminology.hl7.org/CodeSystem/condition-ver-status";
 const UOM_SYSTEM: &str = "http://unitsofmeasure.org";
 const REFERRAL_BUSINESS_STATUS_SYSTEM: &str =
     "https://fhir.infoway-inforoute.ca/CodeSystem/ca-referralbusinessstatus";
@@ -51,10 +56,17 @@ pub(super) async fn sync_encounter(
         event,
     );
     let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
-    let identifier = format!("{}|{}", fhir_cfg.oscar_note_system, event.payload().source_id());
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_note_system,
+        event.payload().source_id()
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -74,10 +86,17 @@ pub(super) async fn sync_document_reference(
         event,
     );
     let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
-    let identifier = format!("{}|{}", fhir_cfg.oscar_note_document_system, event.payload().source_id());
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_note_document_system,
+        event.payload().source_id()
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -104,7 +123,10 @@ pub(super) async fn sync_condition(
     let identifier = format!("{}|{}", identifier_system, event.payload().source_id());
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -123,10 +145,17 @@ pub(super) async fn sync_family_member_history(
         event,
     );
     let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
-    let identifier = format!("{}|{}", fhir_cfg.oscar_cpp_condition_system, event.payload().source_id());
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_cpp_condition_system,
+        event.payload().source_id()
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -146,10 +175,17 @@ pub(super) async fn sync_diagnostic_report(
         event,
     );
     let result = send_transaction_bundle(client, fhir_cfg, token, &bundle).await?;
-    let identifier = format!("{}|{}", fhir_cfg.oscar_consult_response_system, event.payload().source_id());
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_consult_response_system,
+        event.payload().source_id()
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -194,7 +230,8 @@ fn build_conditional_put_bundle(
     event: &SyncEvent,
 ) -> Bundle {
     let sys: String = url::form_urlencoded::byte_serialize(identifier_system.as_bytes()).collect();
-    let val: String = url::form_urlencoded::byte_serialize(event.payload().source_id().as_bytes()).collect();
+    let val: String =
+        url::form_urlencoded::byte_serialize(event.payload().source_id().as_bytes()).collect();
     let conditional_url = format!("{}?identifier={sys}|{val}", event.resource_type().as_path());
 
     let mut bundle = Bundle::default();
@@ -331,17 +368,14 @@ async fn send_transaction_bundle(
                         )));
                     }
 
-                    if let Some(loc) = response
-                        .location
-                        .as_ref()
-                        .and_then(|l| l.value.as_deref())
-                    {
+                    if let Some(loc) = response.location.as_ref().and_then(|l| l.value.as_deref()) {
                         result.fhir_id = parse_location_id(loc).unwrap_or_default();
                         result.version_id = parse_location_version_id(loc);
                     }
 
                     if result.fhir_id.is_empty() {
-                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref()) {
+                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref())
+                        {
                             result.fhir_id = parse_location_id(etag).unwrap_or_default();
                             result.version_id = parse_location_version_id(etag);
                         }
@@ -368,7 +402,11 @@ fn conditional_reference(system: &str, value: &str, resource: &str) -> Reference
 }
 
 fn patient_ref(fhir_cfg: &FhirConfig, demographic_no: &str) -> Reference {
-    conditional_reference(&fhir_cfg.oscar_demographic_system, demographic_no, "Patient")
+    conditional_reference(
+        &fhir_cfg.oscar_demographic_system,
+        demographic_no,
+        "Patient",
+    )
 }
 
 fn practitioner_ref(fhir_cfg: &FhirConfig, provider_no: &str) -> Reference {
@@ -376,7 +414,11 @@ fn practitioner_ref(fhir_cfg: &FhirConfig, provider_no: &str) -> Reference {
 }
 
 fn appointment_ref(fhir_cfg: &FhirConfig, appointment_no: &str) -> Reference {
-    conditional_reference(&fhir_cfg.oscar_appointment_system, appointment_no, "Appointment")
+    conditional_reference(
+        &fhir_cfg.oscar_appointment_system,
+        appointment_no,
+        "Appointment",
+    )
 }
 
 fn encounter_ref(fhir_cfg: &FhirConfig, note_id_value: &str) -> Reference {
@@ -409,9 +451,12 @@ fn build_encounter(
         .as_deref()
         .and_then(billing_class)
         .or_else(|| crate::mapping::casemgmt_note::resolve_class(enc))
-        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!(
-            "unmappable encounter for note_id={}", enc.note_id
-        )))?;
+        .ok_or_else(|| {
+            SyncFailure::Permanent(anyhow::anyhow!(
+                "unmappable encounter for note_id={}",
+                enc.note_id
+            ))
+        })?;
 
     let mut encounter = Encounter::default();
 
@@ -421,7 +466,10 @@ fn build_encounter(
     }));
 
     // Identifier[0] = uuid (or note-id fallback), identifier[1] = revision.
-    let primary_value = enc.uuid.clone().unwrap_or_else(|| format!("oscar-note-{}", enc.note_id));
+    let primary_value = enc
+        .uuid
+        .clone()
+        .unwrap_or_else(|| format!("oscar-note-{}", enc.note_id));
     encounter.identifier.push(Identifier {
         system: Some(fhir_cfg.oscar_note_system.clone().into()),
         value: Some(primary_value.into()),
@@ -511,7 +559,10 @@ fn build_document_reference(
         ..Default::default()
     }));
 
-    let primary_value = doc.uuid.clone().unwrap_or_else(|| format!("oscar-note-{}", doc.note_id));
+    let primary_value = doc
+        .uuid
+        .clone()
+        .unwrap_or_else(|| format!("oscar-note-{}", doc.note_id));
     dr.identifier.push(Identifier {
         system: Some(fhir_cfg.oscar_note_document_system.clone().into()),
         value: Some(primary_value.into()),
@@ -523,8 +574,16 @@ fn build_document_reference(
         ..Default::default()
     });
 
-    dr.status = if doc.archived { "entered-in-error".into() } else { "current".into() };
-    dr.doc_status = if doc.signed { Some("final".into()) } else { Some("preliminary".into()) };
+    dr.status = if doc.archived {
+        "entered-in-error".into()
+    } else {
+        "current".into()
+    };
+    dr.doc_status = if doc.signed {
+        Some("final".into())
+    } else {
+        Some("preliminary".into())
+    };
 
     dr.r#type = Some(Box::new(CodeableConcept {
         text: Some(document_reference_type(&doc.encounter_type).into()),
@@ -571,7 +630,10 @@ fn build_document_reference(
     Ok(dr)
 }
 
-fn build_condition(condition: &DomainCondition, fhir_cfg: &FhirConfig) -> Result<Condition, SyncFailure> {
+fn build_condition(
+    condition: &DomainCondition,
+    fhir_cfg: &FhirConfig,
+) -> Result<Condition, SyncFailure> {
     let mut cond = Condition::default();
 
     cond.meta = Some(Box::new(Meta {
@@ -782,7 +844,11 @@ fn build_diagnostic_report(
                 .consult_response_status_map
                 .get(code)
                 .map(String::as_str)
-                .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("unmapped consult response status: {code}")))?,
+                .ok_or_else(|| {
+                    SyncFailure::Permanent(anyhow::anyhow!(
+                        "unmapped consult response status: {code}"
+                    ))
+                })?,
             None => {
                 return Err(SyncFailure::Permanent(anyhow::anyhow!(
                     "response_id={} has no status",
@@ -802,20 +868,20 @@ fn build_diagnostic_report(
         ..Default::default()
     });
 
-    let based_on = report
-        .based_on
-        .as_ref()
-        .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!(
+    let based_on = report.based_on.as_ref().ok_or_else(|| {
+        SyncFailure::Permanent(anyhow::anyhow!(
             "response_id={} has no originating ServiceRequest",
             report.response_id
-        )))?;
+        ))
+    })?;
     dr.based_on.push(Reference {
         reference: Some(based_on.clone().into()),
         ..Default::default()
     });
 
     let demo_sys: String =
-        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes()).collect();
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes())
+            .collect();
     let demo_val: String =
         url::form_urlencoded::byte_serialize(report.demographic_no.as_bytes()).collect();
     dr.subject = Some(Box::new(Reference {
@@ -825,7 +891,8 @@ fn build_diagnostic_report(
 
     if let Some(provider_no) = &report.provider_no {
         let prov_sys: String =
-            url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
+            url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes())
+                .collect();
         let prov_val: String =
             url::form_urlencoded::byte_serialize(provider_no.as_bytes()).collect();
         dr.performer.push(Reference {
@@ -1078,15 +1145,23 @@ fn encounter_period(
         let end = if let (Some(h), Some(m)) = (hour, minute) {
             if h > 0 || m > 0 {
                 let naive = NaiveDateTime::new(
-                    NaiveDate::parse_from_str(date, "%Y-%m-%d")
-                        .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid observation_date '{date}': {e}")))?,
-                    NaiveTime::parse_from_str(time, "%H:%M:%S%.f")
-                        .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid observation time '{time}': {e}")))?,
+                    NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| {
+                        SyncFailure::Permanent(anyhow::anyhow!(
+                            "invalid observation_date '{date}': {e}"
+                        ))
+                    })?,
+                    NaiveTime::parse_from_str(time, "%H:%M:%S%.f").map_err(|e| {
+                        SyncFailure::Permanent(anyhow::anyhow!(
+                            "invalid observation time '{time}': {e}"
+                        ))
+                    })?,
                 );
                 let end_naive = naive + chrono::Duration::minutes((h * 60 + m).into());
                 let end_date = end_naive.format("%Y-%m-%d").to_string();
                 let end_time = end_naive.format("%H:%M:%S%.f").to_string();
-                Some(to_appointment_instant_rfc3339(&end_date, &end_time, oscar_cfg)?)
+                Some(to_appointment_instant_rfc3339(
+                    &end_date, &end_time, oscar_cfg,
+                )?)
             } else {
                 None
             }
@@ -1106,10 +1181,7 @@ fn encounter_period(
     Ok((None, None))
 }
 
-fn to_instant(
-    obs: &str,
-    oscar_cfg: &OscarConfig,
-) -> Result<Option<String>, SyncFailure> {
+fn to_instant(obs: &str, oscar_cfg: &OscarConfig) -> Result<Option<String>, SyncFailure> {
     if let Some((date, time)) = obs.split_once(' ') {
         return Ok(Some(to_appointment_instant_rfc3339(date, time, oscar_cfg)?));
     }

@@ -46,7 +46,10 @@ fn lookup<'a>(change: &'a RowChange, columns: &ColumnMap, name: &str) -> Option<
 /// filter by origin either.
 ///
 /// Returns `None` if the row has no `requestId` or `demographicNo`.
-pub fn row_to_domain_service_request(change: &RowChange, columns: &ColumnMap) -> Option<DomainServiceRequest> {
+pub fn row_to_domain_service_request(
+    change: &RowChange,
+    columns: &ColumnMap,
+) -> Option<DomainServiceRequest> {
     let request_id = match lookup(change, columns, "requestId") {
         Some(id) => id.to_string(),
         None => {
@@ -58,7 +61,9 @@ pub fn row_to_domain_service_request(change: &RowChange, columns: &ColumnMap) ->
     let demographic_no = match lookup(change, columns, "demographicNo") {
         Some(d) => d.to_string(),
         None => {
-            info!("consultationRequests mapping: skipping requestId={request_id} (no demographicNo)");
+            info!(
+                "consultationRequests mapping: skipping requestId={request_id} (no demographicNo)"
+            );
             return None;
         }
     };
@@ -111,7 +116,11 @@ mod tests {
     }
 
     fn columns(names: &[&str]) -> ColumnMap {
-        names.iter().enumerate().map(|(i, n)| (n.to_string(), i)).collect()
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.to_string(), i))
+            .collect()
     }
 
     #[test]
@@ -166,7 +175,9 @@ mod tests {
         // No "source" column at all in this change -- mirrors Oscar wiping
         // it on save. Mapping must still succeed via requestId alone.
         let cols = columns(&["requestId", "demographicNo", "status"]);
-        let r = row_to_domain_service_request(&change(vec![Some("13"), Some("118"), Some("4")]), &cols).unwrap();
+        let r =
+            row_to_domain_service_request(&change(vec![Some("13"), Some("118"), Some("4")]), &cols)
+                .unwrap();
         assert_eq!(r.request_id, "13");
         assert_eq!(r.status, Some("4".to_string()));
     }
@@ -186,7 +197,11 @@ mod tests {
     #[test]
     fn system_actor_provider_is_omitted() {
         let cols = columns(&["requestId", "demographicNo", "providerNo"]);
-        let r = row_to_domain_service_request(&change(vec![Some("13"), Some("118"), Some("-1")]), &cols).unwrap();
+        let r = row_to_domain_service_request(
+            &change(vec![Some("13"), Some("118"), Some("-1")]),
+            &cols,
+        )
+        .unwrap();
         assert_eq!(r.provider_no, None);
     }
 }

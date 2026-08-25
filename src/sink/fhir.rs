@@ -12,16 +12,16 @@ use std::io::Write;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::{LocalResult, NaiveDate, NaiveTime, TimeZone};
 use fhirbolt::model::r4b::resources::{
     Appointment, AppointmentParticipant, Bundle, BundleEntry, BundleEntryRequest, CareTeam,
     CareTeamParticipant, Patient, PatientDeceased, PatientLink, Practitioner,
 };
-use fhirbolt::model::r4b::Resource as FhirResource;
 use fhirbolt::model::r4b::types::{
     Address, CodeableConcept, Coding, ContactPoint, Extension, ExtensionValue, HumanName,
     Identifier, Meta, Reference,
 };
-use chrono::{LocalResult, NaiveDate, NaiveTime, TimeZone};
+use fhirbolt::model::r4b::Resource as FhirResource;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, info, warn};
 
@@ -63,7 +63,9 @@ pub async fn run(
                     if !result.fhir_id.is_empty() {
                         let n = build_dispatch_notification(&event, &cfg, &result);
                         if tx.try_send(n).is_err() {
-                            warn!("fhir sink: dispatch channel full or closed, dropping notification");
+                            warn!(
+                                "fhir sink: dispatch channel full or closed, dropping notification"
+                            );
                             metrics.inc_dispatch_dropped();
                         }
                     } else {
@@ -150,7 +152,9 @@ async fn sync_with_retry(
         }
     }
 
-    Err(SyncFailure::Permanent(last_err.unwrap_or_else(|| anyhow::anyhow!("unknown sync failure"))))
+    Err(SyncFailure::Permanent(
+        last_err.unwrap_or_else(|| anyhow::anyhow!("unknown sync failure")),
+    ))
 }
 
 /// Appends a dead-letter record. Identifiers only — never the full payload
@@ -209,15 +213,35 @@ fn build_put_request(
     event: &SyncEvent,
 ) -> reqwest::RequestBuilder {
     let resource_path = event.resource_type().as_path();
-    let base = format!("{}/{resource_path}", fhir_cfg.base_url.trim_end_matches('/'));
+    let base = format!(
+        "{}/{resource_path}",
+        fhir_cfg.base_url.trim_end_matches('/')
+    );
 
     let (identifier_system, source_id) = match event.payload() {
-        DomainResource::Patient(p) => (&fhir_cfg.oscar_demographic_system, p.demographic_no.as_str()),
-        DomainResource::Practitioner(p) => (&fhir_cfg.oscar_provider_system, p.provider_no.as_str()),
-        DomainResource::Appointment(a) => (&fhir_cfg.oscar_appointment_system, a.appointment_no.as_str()),
-        DomainResource::Encounter(e) => (&fhir_cfg.oscar_note_system, e.uuid.as_deref().unwrap_or(&e.note_id)),
-        DomainResource::DocumentReference(d) => (&fhir_cfg.oscar_note_document_system, d.uuid.as_deref().unwrap_or(&d.note_id)),
-        DomainResource::DiagnosticReport(r) => (&fhir_cfg.oscar_consult_response_system, r.response_id.as_str()),
+        DomainResource::Patient(p) => (
+            &fhir_cfg.oscar_demographic_system,
+            p.demographic_no.as_str(),
+        ),
+        DomainResource::Practitioner(p) => {
+            (&fhir_cfg.oscar_provider_system, p.provider_no.as_str())
+        }
+        DomainResource::Appointment(a) => (
+            &fhir_cfg.oscar_appointment_system,
+            a.appointment_no.as_str(),
+        ),
+        DomainResource::Encounter(e) => (
+            &fhir_cfg.oscar_note_system,
+            e.uuid.as_deref().unwrap_or(&e.note_id),
+        ),
+        DomainResource::DocumentReference(d) => (
+            &fhir_cfg.oscar_note_document_system,
+            d.uuid.as_deref().unwrap_or(&d.note_id),
+        ),
+        DomainResource::DiagnosticReport(r) => (
+            &fhir_cfg.oscar_consult_response_system,
+            r.response_id.as_str(),
+        ),
         DomainResource::Condition(c) => {
             let sys = if c.source_table == "dxresearch" {
                 &fhir_cfg.oscar_dxresearch_system
@@ -374,10 +398,16 @@ async fn sync_patient(
         }
     }
 
-    let identifier = format!("{}|{}", fhir_cfg.oscar_demographic_system, patient.demographic_no);
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_demographic_system, patient.demographic_no
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -450,16 +480,24 @@ async fn sync_practitioner(
         }
     }
 
-    let identifier = format!("{}|{}", fhir_cfg.oscar_provider_system, practitioner.provider_no);
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_provider_system, practitioner.provider_no
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
 
-const OSCAR_APPOINTMENT_STATUS_SYSTEM: &str = "https://arsmedicatech.com/fhir/sid/oscar-appointment-status";
-const OSCAR_BOOKING_SOURCE_URL: &str = "https://arsmedicatech.com/fhir/StructureDefinition/oscar-booking-source";
+const OSCAR_APPOINTMENT_STATUS_SYSTEM: &str =
+    "https://arsmedicatech.com/fhir/sid/oscar-appointment-status";
+const OSCAR_BOOKING_SOURCE_URL: &str =
+    "https://arsmedicatech.com/fhir/StructureDefinition/oscar-booking-source";
 
 async fn sync_appointment(
     client: &reqwest::Client,
@@ -524,17 +562,14 @@ async fn sync_appointment(
                         )));
                     }
 
-                    if let Some(loc) = response
-                        .location
-                        .as_ref()
-                        .and_then(|l| l.value.as_deref())
-                    {
+                    if let Some(loc) = response.location.as_ref().and_then(|l| l.value.as_deref()) {
                         result.fhir_id = parse_location_id(loc).unwrap_or_default();
                         result.version_id = parse_location_version_id(loc);
                     }
 
                     if result.fhir_id.is_empty() {
-                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref()) {
+                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref())
+                        {
                             // W/"Appointment/123/_history/2" or just the id.
                             result.fhir_id = parse_location_id(etag).unwrap_or_default();
                             result.version_id = parse_location_version_id(etag);
@@ -545,10 +580,16 @@ async fn sync_appointment(
         }
     }
 
-    let identifier = format!("{}|{}", fhir_cfg.oscar_appointment_system, appointment.appointment_no);
+    let identifier = format!(
+        "{}|{}",
+        fhir_cfg.oscar_appointment_system, appointment.appointment_no
+    );
     info!(
         "fhir sink: synced {} -> {} (fhir_id={} version_id={:?})",
-        event.idempotency_key(), identifier, result.fhir_id, result.version_id
+        event.idempotency_key(),
+        identifier,
+        result.fhir_id,
+        result.version_id
     );
     Ok(result)
 }
@@ -576,7 +617,8 @@ async fn sync_care_team(
     );
 
     let (initial_id, initial_version, initial_resource) =
-        match find_existing_care_team(client, fhir_cfg, token.as_deref(), base, &identifier).await? {
+        match find_existing_care_team(client, fhir_cfg, token.as_deref(), base, &identifier).await?
+        {
             Some(found) => found,
             None => {
                 let fhir_ct = build_care_team(care_team, fhir_cfg);
@@ -739,7 +781,10 @@ async fn sync_care_team(
     )))
 }
 
-fn build_care_team_participant(care_team: &DomainCareTeam, fhir_cfg: &FhirConfig) -> CareTeamParticipant {
+fn build_care_team_participant(
+    care_team: &DomainCareTeam,
+    fhir_cfg: &FhirConfig,
+) -> CareTeamParticipant {
     let sys: String =
         url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
     let val: String =
@@ -765,7 +810,8 @@ fn build_care_team_participant(care_team: &DomainCareTeam, fhir_cfg: &FhirConfig
 
 fn build_care_team(care_team: &DomainCareTeam, fhir_cfg: &FhirConfig) -> CareTeam {
     let demo_sys: String =
-        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes()).collect();
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes())
+            .collect();
     let demo_val: String =
         url::form_urlencoded::byte_serialize(care_team.demographic_no.as_bytes()).collect();
 
@@ -784,7 +830,11 @@ fn build_care_team(care_team: &DomainCareTeam, fhir_cfg: &FhirConfig) -> CareTea
             coding: vec![Coding {
                 system: Some("http://loinc.org".to_string().into()),
                 code: Some("LA28865-6".to_string().into()),
-                display: Some("Longitudinal care-coordination focused care team".to_string().into()),
+                display: Some(
+                    "Longitudinal care-coordination focused care team"
+                        .to_string()
+                        .into(),
+                ),
                 ..Default::default()
             }],
             ..Default::default()
@@ -891,9 +941,7 @@ async fn find_existing_care_team(
         };
         // D5: only touch CareTeams carrying our Oscar identifier and source stamp.
         let has_oscar_identifier = ct.identifier.iter().any(|i| {
-            i.system
-                .as_ref()
-                .and_then(|s| s.value.as_deref())
+            i.system.as_ref().and_then(|s| s.value.as_deref())
                 == Some(fhir_cfg.oscar_care_team_system.as_str())
                 && i.value.as_ref().and_then(|v| v.value.as_deref()).is_some()
         });
@@ -943,7 +991,11 @@ async fn resolve_practitioner_ids(
 
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(classify_http_error(status, &text, "Practitioner identity search"));
+        return Err(classify_http_error(
+            status,
+            &text,
+            "Practitioner identity search",
+        ));
     }
 
     let body_text = resp.text().await.unwrap_or_default();
@@ -1034,17 +1086,14 @@ fn parse_bundle_response(body_text: &str) -> Result<FhirResult, SyncFailure> {
                         )));
                     }
 
-                    if let Some(loc) = response
-                        .location
-                        .as_ref()
-                        .and_then(|l| l.value.as_deref())
-                    {
+                    if let Some(loc) = response.location.as_ref().and_then(|l| l.value.as_deref()) {
                         result.fhir_id = parse_location_id(loc).unwrap_or_default();
                         result.version_id = parse_location_version_id(loc);
                     }
 
                     if result.fhir_id.is_empty() {
-                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref()) {
+                        if let Some(etag) = response.etag.as_ref().and_then(|e| e.value.as_deref())
+                        {
                             result.fhir_id = parse_location_id(etag).unwrap_or_default();
                             result.version_id = parse_location_version_id(etag);
                         }
@@ -1057,7 +1106,10 @@ fn parse_bundle_response(body_text: &str) -> Result<FhirResult, SyncFailure> {
     Ok(result)
 }
 
-fn parse_care_team_put_response(body_text: &str, fallback_id: &str) -> Result<FhirResult, SyncFailure> {
+fn parse_care_team_put_response(
+    body_text: &str,
+    fallback_id: &str,
+) -> Result<FhirResult, SyncFailure> {
     let mut result = FhirResult {
         fhir_id: fallback_id.to_string(),
         version_id: None,
@@ -1196,7 +1248,11 @@ fn build_address(addr: &DomainAddress) -> Address {
     Address {
         r#use: Some(addr.use_.as_str().into()),
         r#type: Some(addr.kind.as_str().into()),
-        r#line: addr.line.clone().map(|l| vec![l.into()]).unwrap_or_default(),
+        r#line: addr
+            .line
+            .clone()
+            .map(|l| vec![l.into()])
+            .unwrap_or_default(),
         city: addr.city.clone().map(Into::into),
         state: addr.province.clone().map(Into::into),
         country: Some("CA".into()),
@@ -1366,20 +1422,18 @@ fn practitioner_active(payload: &DomainPractitioner) -> bool {
 /// Returns `SyncFailure::Permanent` for nonexistent local times. For ambiguous
 /// times (fall-back) the first (DST) candidate is chosen and a `warn!` names
 /// both candidates.
-fn to_appointment_instant(
-    date: &str,
-    time: &str,
-    tz_name: &str,
-) -> Result<String, SyncFailure> {
-    let naive_date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
-        .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid appointment_date '{date}': {e}")))?;
-    let naive_time = NaiveTime::parse_from_str(time, "%H:%M:%S%.f")
-    .map_err(|e| SyncFailure::Permanent(anyhow::anyhow!("invalid start/end_time '{time}': {e}")))?;
+fn to_appointment_instant(date: &str, time: &str, tz_name: &str) -> Result<String, SyncFailure> {
+    let naive_date = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|e| {
+        SyncFailure::Permanent(anyhow::anyhow!("invalid appointment_date '{date}': {e}"))
+    })?;
+    let naive_time = NaiveTime::parse_from_str(time, "%H:%M:%S%.f").map_err(|e| {
+        SyncFailure::Permanent(anyhow::anyhow!("invalid start/end_time '{time}': {e}"))
+    })?;
     let naive = naive_date.and_time(naive_time);
 
-    let tz: chrono_tz::Tz = tz_name
-        .parse()
-        .map_err(|_| SyncFailure::Permanent(anyhow::anyhow!("invalid IANA timezone '{tz_name}'")))?;
+    let tz: chrono_tz::Tz = tz_name.parse().map_err(|_| {
+        SyncFailure::Permanent(anyhow::anyhow!("invalid IANA timezone '{tz_name}'"))
+    })?;
 
     let dt = match tz.from_local_datetime(&naive) {
         LocalResult::Single(dt) => dt,
@@ -1405,7 +1459,11 @@ fn appointment_minutes_duration(start: &str, end: &str) -> Option<u32> {
     let start = NaiveTime::parse_from_str(start, "%H:%M:%S%.f").ok()?;
     let end = NaiveTime::parse_from_str(end, "%H:%M:%S%.f").ok()?;
     let seconds = (end - start).num_seconds();
-    if seconds > 0 { Some((seconds / 60) as u32) } else { None }
+    if seconds > 0 {
+        Some((seconds / 60) as u32)
+    } else {
+        None
+    }
 }
 
 fn build_appointment(
@@ -1445,7 +1503,9 @@ fn build_appointment(
                 .appointment_status_map
                 .get(code)
                 .map(String::as_str)
-                .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("unmapped_appointment_status: {code}")))?,
+                .ok_or_else(|| {
+                    SyncFailure::Permanent(anyhow::anyhow!("unmapped_appointment_status: {code}"))
+                })?,
             None => {
                 return Err(SyncFailure::Permanent(anyhow::anyhow!(
                     "appointment_no={} has no status",
@@ -1461,11 +1521,17 @@ fn build_appointment(
         .as_deref()
         .ok_or_else(|| SyncFailure::Permanent(anyhow::anyhow!("missing oscar timezone")))?;
 
-    if let (Some(date), Some(start)) = (payload.appointment_date.as_deref(), payload.start_time.as_deref()) {
+    if let (Some(date), Some(start)) = (
+        payload.appointment_date.as_deref(),
+        payload.start_time.as_deref(),
+    ) {
         appt.start = Some(to_appointment_instant(date, start, tz)?.into());
     }
 
-    if let (Some(date), Some(end)) = (payload.appointment_date.as_deref(), payload.end_time.as_deref()) {
+    if let (Some(date), Some(end)) = (
+        payload.appointment_date.as_deref(),
+        payload.end_time.as_deref(),
+    ) {
         appt.end = Some(to_appointment_instant(date, end, tz)?.into());
     }
 
@@ -1524,7 +1590,9 @@ fn build_appointment(
     let mut participants = Vec::new();
 
     if let Some(demographic_no) = &payload.demographic_no {
-        let sys: String = url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes()).collect();
+        let sys: String =
+            url::form_urlencoded::byte_serialize(fhir_cfg.oscar_demographic_system.as_bytes())
+                .collect();
         let val: String = url::form_urlencoded::byte_serialize(demographic_no.as_bytes()).collect();
         participants.push(AppointmentParticipant {
             actor: Some(Box::new(Reference {
@@ -1538,7 +1606,9 @@ fn build_appointment(
     }
 
     if let Some(provider_no) = &payload.provider_no {
-        let sys: String = url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes()).collect();
+        let sys: String =
+            url::form_urlencoded::byte_serialize(fhir_cfg.oscar_provider_system.as_bytes())
+                .collect();
         let val: String = url::form_urlencoded::byte_serialize(provider_no.as_bytes()).collect();
         participants.push(AppointmentParticipant {
             actor: Some(Box::new(Reference {
@@ -1572,7 +1642,8 @@ fn build_appointment_bundle(
     event: &SyncEvent,
 ) -> Bundle {
     let sys: String =
-        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_appointment_system.as_bytes()).collect();
+        url::form_urlencoded::byte_serialize(fhir_cfg.oscar_appointment_system.as_bytes())
+            .collect();
     let val: String =
         url::form_urlencoded::byte_serialize(event.payload().source_id().as_bytes()).collect();
     let conditional_url = format!("{}?identifier={sys}|{val}", event.resource_type().as_path());
@@ -1581,7 +1652,9 @@ fn build_appointment_bundle(
     bundle.r#type = "transaction".into();
     bundle.entry.push(BundleEntry {
         full_url: Some(format!("urn:uuid:{}", event.idempotency_key()).into()),
-        resource: Some(FhirResource::Appointment(Box::new(fhir_appointment.clone()))),
+        resource: Some(FhirResource::Appointment(Box::new(
+            fhir_appointment.clone(),
+        ))),
         request: Some(BundleEntryRequest {
             method: "PUT".into(),
             url: conditional_url.into(),
@@ -1611,9 +1684,14 @@ mod tests {
             oscar_demographic_system: "https://arsmedicatech.com/fhir/sid/oscar-demographic"
                 .to_string(),
             oscar_provider_system: "https://arsmedicatech.com/fhir/sid/oscar-provider".to_string(),
-            oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment".to_string(),
-            bc_phn_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".to_string(),
-            bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".to_string(),
+            oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment"
+                .to_string(),
+            bc_phn_system:
+                "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id"
+                    .to_string(),
+            bc_msp_practitioner_system:
+                "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"
+                    .to_string(),
             token_env: None,
             keycloak: None,
             ..Default::default()
@@ -1662,24 +1740,66 @@ mod tests {
 
     #[test]
     fn build_appointment_maps_all_fields() {
-        let appt = build_appointment(&appt_payload(), &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
+        let appt =
+            build_appointment(&appt_payload(), &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
 
         assert_eq!(appt.identifier.len(), 2);
         assert_eq!(appt.identifier[0].value, Some("1".to_string().into()));
         assert_eq!(appt.identifier[1].value, Some("t".to_string().into()));
         assert_eq!(appt.status.value, Some("booked".to_string()));
-        assert_eq!(appt.start.as_ref().map(|i| i.value.clone()), Some(Some("2026-08-10T09:00:00-07:00".to_string())));
-        assert_eq!(appt.end.as_ref().map(|i| i.value.clone()), Some(Some("2026-08-10T09:15:00-07:00".to_string())));
-        assert_eq!(appt.minutes_duration.as_ref().map(|m| m.value), Some(Some(15)));
-        assert_eq!(appt.appointment_type.as_ref().and_then(|c| c.text.as_ref()).and_then(|s| s.value.clone()), Some("Regular".to_string()));
+        assert_eq!(
+            appt.start.as_ref().map(|i| i.value.clone()),
+            Some(Some("2026-08-10T09:00:00-07:00".to_string()))
+        );
+        assert_eq!(
+            appt.end.as_ref().map(|i| i.value.clone()),
+            Some(Some("2026-08-10T09:15:00-07:00".to_string()))
+        );
+        assert_eq!(
+            appt.minutes_duration.as_ref().map(|m| m.value),
+            Some(Some(15))
+        );
+        assert_eq!(
+            appt.appointment_type
+                .as_ref()
+                .and_then(|c| c.text.as_ref())
+                .and_then(|s| s.value.clone()),
+            Some("Regular".to_string())
+        );
         assert_eq!(appt.reason_code.len(), 1);
-        assert_eq!(appt.comment.as_ref().map(|s| s.value.clone()), Some(Some("note one / note two".to_string())));
+        assert_eq!(
+            appt.comment.as_ref().map(|s| s.value.clone()),
+            Some(Some("note one / note two".to_string()))
+        );
         assert_eq!(appt.priority.as_ref().map(|u| u.value), Some(Some(3)));
-        assert_eq!(appt.created.as_ref().map(|d| d.value.clone()), Some(Some("2026-08-09T16:30:00".to_string())));
+        assert_eq!(
+            appt.created.as_ref().map(|d| d.value.clone()),
+            Some(Some("2026-08-09T16:30:00".to_string()))
+        );
         assert_eq!(appt.extension.len(), 1);
         assert_eq!(appt.participant.len(), 2);
-        assert!(appt.participant[0].actor.as_ref().unwrap().reference.as_ref().unwrap().value.as_ref().unwrap().starts_with("Patient?identifier"));
-        assert!(appt.participant[1].actor.as_ref().unwrap().reference.as_ref().unwrap().value.as_ref().unwrap().starts_with("Practitioner?identifier"));
+        assert!(appt.participant[0]
+            .actor
+            .as_ref()
+            .unwrap()
+            .reference
+            .as_ref()
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap()
+            .starts_with("Patient?identifier"));
+        assert!(appt.participant[1]
+            .actor
+            .as_ref()
+            .unwrap()
+            .reference
+            .as_ref()
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap()
+            .starts_with("Practitioner?identifier"));
     }
 
     #[test]
@@ -1687,7 +1807,9 @@ mod tests {
         let cfg = fhir_cfg();
         let payload = appt_payload();
         let event = SyncEvent::new(
-            Source::OscarBinlog { table: "appointment".to_string() },
+            Source::OscarBinlog {
+                table: "appointment".to_string(),
+            },
             Op::Upsert,
             DomainResource::Appointment(payload.clone()),
             chrono::Utc::now(),
@@ -1714,7 +1836,8 @@ mod tests {
 
     #[test]
     fn build_appointment_delete_sets_cancelled() {
-        let appt = build_appointment(&appt_payload(), &fhir_cfg(), &oscar_cfg(), Op::Delete).unwrap();
+        let appt =
+            build_appointment(&appt_payload(), &fhir_cfg(), &oscar_cfg(), Op::Delete).unwrap();
         assert_eq!(appt.status.value, Some("cancelled".to_string()));
     }
 
@@ -1743,8 +1866,22 @@ mod tests {
         payload.start_time = Some("01:30:00".to_string());
         payload.end_time = Some("01:45:00".to_string());
         let appt = build_appointment(&payload, &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
-        assert!(appt.start.as_ref().unwrap().value.as_ref().unwrap().contains("-07:00"));
-        assert!(appt.end.as_ref().unwrap().value.as_ref().unwrap().contains("-07:00"));
+        assert!(appt
+            .start
+            .as_ref()
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap()
+            .contains("-07:00"));
+        assert!(appt
+            .end
+            .as_ref()
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap()
+            .contains("-07:00"));
     }
 
     #[test]
@@ -1753,7 +1890,17 @@ mod tests {
         payload.provider_no = None;
         let appt = build_appointment(&payload, &fhir_cfg(), &oscar_cfg(), Op::Upsert).unwrap();
         assert_eq!(appt.participant.len(), 1);
-        assert!(appt.participant[0].actor.as_ref().unwrap().reference.as_ref().unwrap().value.as_ref().unwrap().starts_with("Patient"));
+        assert!(appt.participant[0]
+            .actor
+            .as_ref()
+            .unwrap()
+            .reference
+            .as_ref()
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap()
+            .starts_with("Patient"));
     }
 
     #[test]
@@ -1852,10 +1999,22 @@ mod tests {
 
         let patient = build_patient(&payload, &fhir_cfg());
         assert_eq!(patient.address.len(), 2);
-        assert_eq!(patient.address[0].r#type.as_ref().map(|c| c.value.clone()), Some(Some("postal".to_string())));
-        assert_eq!(patient.address[1].r#type.as_ref().map(|c| c.value.clone()), Some(Some("physical".to_string())));
-        assert_eq!(patient.address[0].country.as_ref().map(|c| c.value.clone()), Some(Some("CA".to_string())));
-        assert_eq!(patient.active.as_ref().map(|b| b.value).flatten(), Some(true));
+        assert_eq!(
+            patient.address[0].r#type.as_ref().map(|c| c.value.clone()),
+            Some(Some("postal".to_string()))
+        );
+        assert_eq!(
+            patient.address[1].r#type.as_ref().map(|c| c.value.clone()),
+            Some(Some("physical".to_string()))
+        );
+        assert_eq!(
+            patient.address[0].country.as_ref().map(|c| c.value.clone()),
+            Some(Some("CA".to_string()))
+        );
+        assert_eq!(
+            patient.active.as_ref().map(|b| b.value).flatten(),
+            Some(true)
+        );
         assert_eq!(patient.identifier.len(), 2); // no ver
     }
 
@@ -1885,7 +2044,15 @@ mod tests {
         let patient = build_patient(&payload, &fhir_cfg());
         assert_eq!(patient.address.len(), 1);
         assert!(patient.address[0].r#line.is_empty());
-        assert_eq!(patient.gender.as_ref().map(|c| c.value.clone()).flatten().as_deref(), Some("other"));
+        assert_eq!(
+            patient
+                .gender
+                .as_ref()
+                .map(|c| c.value.clone())
+                .flatten()
+                .as_deref(),
+            Some("other")
+        );
     }
 
     #[test]
@@ -1905,8 +2072,14 @@ mod tests {
         };
 
         let patient = build_patient(&payload, &fhir_cfg());
-        assert_eq!(patient.active.as_ref().map(|b| b.value).flatten(), Some(false));
-        assert!(matches!(patient.deceased, Some(PatientDeceased::Boolean(_))));
+        assert_eq!(
+            patient.active.as_ref().map(|b| b.value).flatten(),
+            Some(false)
+        );
+        assert!(matches!(
+            patient.deceased,
+            Some(PatientDeceased::Boolean(_))
+        ));
     }
 
     #[test]
@@ -1926,10 +2099,20 @@ mod tests {
         };
 
         let patient = build_patient(&payload, &fhir_cfg());
-        assert_eq!(patient.active.as_ref().map(|b| b.value).flatten(), Some(false));
+        assert_eq!(
+            patient.active.as_ref().map(|b| b.value).flatten(),
+            Some(false)
+        );
         assert_eq!(patient.link.len(), 1);
         assert_eq!(patient.link[0].r#type.value.as_deref(), Some("replaced-by"));
-        assert!(patient.link[0].other.reference.as_ref().map(|s| s.value.as_deref()).flatten().unwrap_or("").contains("101"));
+        assert!(patient.link[0]
+            .other
+            .reference
+            .as_ref()
+            .map(|s| s.value.as_deref())
+            .flatten()
+            .unwrap_or("")
+            .contains("101"));
     }
 
     #[test]
@@ -1954,17 +2137,62 @@ mod tests {
 
         let p = build_practitioner(&payload, &fhir_cfg());
         assert_eq!(p.identifier.len(), 3);
-        assert_eq!(p.identifier[0].system.as_ref().and_then(|s| s.value.as_deref()), Some("https://arsmedicatech.com/fhir/sid/oscar-provider"));
-        assert_eq!(p.identifier[0].value.as_ref().and_then(|s| s.value.as_deref()), Some("1001"));
-        assert_eq!(p.identifier[1].system.as_ref().and_then(|s| s.value.as_deref()), Some("https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"));
-        assert_eq!(p.identifier[1].value.as_ref().and_then(|s| s.value.as_deref()), Some("B1001"));
-        assert_eq!(p.identifier[2].value.as_ref().and_then(|s| s.value.as_deref()), Some("PN-1"));
+        assert_eq!(
+            p.identifier[0]
+                .system
+                .as_ref()
+                .and_then(|s| s.value.as_deref()),
+            Some("https://arsmedicatech.com/fhir/sid/oscar-provider")
+        );
+        assert_eq!(
+            p.identifier[0]
+                .value
+                .as_ref()
+                .and_then(|s| s.value.as_deref()),
+            Some("1001")
+        );
+        assert_eq!(
+            p.identifier[1]
+                .system
+                .as_ref()
+                .and_then(|s| s.value.as_deref()),
+            Some("https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number")
+        );
+        assert_eq!(
+            p.identifier[1]
+                .value
+                .as_ref()
+                .and_then(|s| s.value.as_deref()),
+            Some("B1001")
+        );
+        assert_eq!(
+            p.identifier[2]
+                .value
+                .as_ref()
+                .and_then(|s| s.value.as_deref()),
+            Some("PN-1")
+        );
         assert_eq!(p.name.len(), 1);
-        assert_eq!(p.name[0].prefix.first().and_then(|s| s.value.as_deref()), Some("Dr"));
-        assert_eq!(p.name[0].given.first().and_then(|s| s.value.as_deref()), Some("Alice"));
-        assert_eq!(p.name[0].family.as_ref().and_then(|s| s.value.as_deref()), Some("Ng"));
-        assert_eq!(p.gender.as_ref().and_then(|c| c.value.as_deref()), Some("female"));
-        assert_eq!(p.birth_date.as_ref().and_then(|d| d.value.as_deref()), Some("1980-04-15"));
+        assert_eq!(
+            p.name[0].prefix.first().and_then(|s| s.value.as_deref()),
+            Some("Dr")
+        );
+        assert_eq!(
+            p.name[0].given.first().and_then(|s| s.value.as_deref()),
+            Some("Alice")
+        );
+        assert_eq!(
+            p.name[0].family.as_ref().and_then(|s| s.value.as_deref()),
+            Some("Ng")
+        );
+        assert_eq!(
+            p.gender.as_ref().and_then(|c| c.value.as_deref()),
+            Some("female")
+        );
+        assert_eq!(
+            p.birth_date.as_ref().and_then(|d| d.value.as_deref()),
+            Some("1980-04-15")
+        );
         assert_eq!(p.telecom.len(), 3);
         assert_eq!(p.address.len(), 1);
         assert_eq!(p.active.as_ref().map(|b| b.value).flatten(), Some(true));
@@ -2002,7 +2230,9 @@ mod tests {
         let path_str = path.to_str().unwrap();
 
         let event = SyncEvent::new(
-            Source::OscarBinlog { table: "demographic".to_string() },
+            Source::OscarBinlog {
+                table: "demographic".to_string(),
+            },
             Op::Upsert,
             DomainResource::Patient(DomainPatient {
                 demographic_no: "123".to_string(),
@@ -2035,7 +2265,9 @@ mod tests {
     fn conditional_put_url_percent_encodes_pipe() {
         let cfg = fhir_cfg();
         let event = SyncEvent::new(
-            Source::OscarBinlog { table: "demographic".to_string() },
+            Source::OscarBinlog {
+                table: "demographic".to_string(),
+            },
             Op::Upsert,
             DomainResource::Patient(DomainPatient {
                 demographic_no: "121".to_string(),
@@ -2066,7 +2298,10 @@ mod tests {
         assert!(!url.contains('|'), "expected no literal pipe in URL: {url}");
     }
 
-    async fn run_with_http_status(status_line: &str, max_attempts: u32) -> (Result<(), SyncFailure>, u32) {
+    async fn run_with_http_status(
+        status_line: &str,
+        max_attempts: u32,
+    ) -> (Result<(), SyncFailure>, u32) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let attempts = Arc::new(AtomicU32::new(0));
@@ -2086,21 +2321,16 @@ mod tests {
                         while header_end.is_none() {
                             let n = socket.read(&mut buf[pos..]).await.unwrap();
                             pos += n;
-                            if let Some(i) =
-                                buf[..pos].windows(4).position(|w| w == b"\r\n\r\n")
-                            {
+                            if let Some(i) = buf[..pos].windows(4).position(|w| w == b"\r\n\r\n") {
                                 header_end = Some(i + 4);
                             }
                         }
                         let header_end = header_end.unwrap();
                         let header = String::from_utf8_lossy(&buf[..header_end]);
-                        let content_len = header
-                            .to_lowercase()
-                            .lines()
-                            .find_map(|l| {
-                                l.strip_prefix("content-length:")
-                                    .and_then(|v| v.trim().parse::<usize>().ok())
-                            });
+                        let content_len = header.to_lowercase().lines().find_map(|l| {
+                            l.strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        });
                         if let Some(len) = content_len {
                             let body_have = pos.saturating_sub(header_end);
                             let mut remaining = len.saturating_sub(body_have);
@@ -2132,12 +2362,17 @@ mod tests {
             server: ServerConfig::default(),
             fhir: FhirConfig {
                 base_url: format!("http://127.0.0.1:{port}/fhir"),
-                oscar_demographic_system:
-                    "https://arsmedicatech.com/fhir/sid/oscar-demographic".into(),
+                oscar_demographic_system: "https://arsmedicatech.com/fhir/sid/oscar-demographic"
+                    .into(),
                 oscar_provider_system: "https://arsmedicatech.com/fhir/sid/oscar-provider".into(),
-                oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment".into(),
-                bc_phn_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id".into(),
-                bc_msp_practitioner_system: "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number".into(),
+                oscar_appointment_system: "https://arsmedicatech.com/fhir/sid/oscar-appointment"
+                    .into(),
+                bc_phn_system:
+                    "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-patient-healthcare-id"
+                        .into(),
+                bc_msp_practitioner_system:
+                    "https://fhir.infoway-inforoute.ca/NamingSystem/ca-bc-provider-billing-number"
+                        .into(),
                 token_env: None,
                 keycloak: None,
                 ..Default::default()
@@ -2157,7 +2392,9 @@ mod tests {
         };
 
         let event = SyncEvent::new(
-            Source::OscarBinlog { table: "demographic".to_string() },
+            Source::OscarBinlog {
+                table: "demographic".to_string(),
+            },
             Op::Upsert,
             DomainResource::Patient(DomainPatient {
                 demographic_no: "121".into(),
@@ -2210,11 +2447,17 @@ mod tests {
 
         assert_eq!(ct.identifier.len(), 1);
         assert_eq!(
-            ct.identifier[0].system.as_ref().and_then(|s| s.value.as_deref()),
+            ct.identifier[0]
+                .system
+                .as_ref()
+                .and_then(|s| s.value.as_deref()),
             Some(cfg.oscar_care_team_system.as_str())
         );
         assert_eq!(
-            ct.identifier[0].value.as_ref().and_then(|v| v.value.as_deref()),
+            ct.identifier[0]
+                .value
+                .as_ref()
+                .and_then(|v| v.value.as_deref()),
             Some("101")
         );
         assert_eq!(
@@ -2237,7 +2480,10 @@ mod tests {
             .and_then(|s| s.reference.as_ref())
             .and_then(|r| r.value.as_deref())
             .unwrap_or("");
-        assert!(subject_ref.starts_with("Patient?identifier="), "subject must be a Patient conditional reference: {subject_ref}");
+        assert!(
+            subject_ref.starts_with("Patient?identifier="),
+            "subject must be a Patient conditional reference: {subject_ref}"
+        );
         assert!(subject_ref.contains("101"));
 
         assert_eq!(ct.participant.len(), 1);
@@ -2251,7 +2497,8 @@ mod tests {
         assert!(member_ref.contains("P-001"));
 
         assert_eq!(
-            ct.meta.as_ref()
+            ct.meta
+                .as_ref()
                 .and_then(|m| m.source.as_ref())
                 .and_then(|s| s.value.as_deref()),
             Some(META_SOURCE)
@@ -2262,7 +2509,9 @@ mod tests {
     fn care_team_idempotency_key_differs_from_patient_for_same_row() {
         let now = chrono::Utc::now();
         let patient_event = SyncEvent::new(
-            Source::OscarBinlog { table: "demographic".to_string() },
+            Source::OscarBinlog {
+                table: "demographic".to_string(),
+            },
             Op::Upsert,
             DomainResource::Patient(DomainPatient {
                 demographic_no: "101".to_string(),
@@ -2280,7 +2529,9 @@ mod tests {
             now,
         );
         let care_team_event = SyncEvent::new(
-            Source::OscarBinlog { table: "demographic".to_string() },
+            Source::OscarBinlog {
+                table: "demographic".to_string(),
+            },
             Op::Upsert,
             DomainResource::CareTeam(DomainCareTeam {
                 demographic_no: "101".to_string(),
@@ -2288,6 +2539,9 @@ mod tests {
             }),
             now,
         );
-        assert_ne!(patient_event.idempotency_key(), care_team_event.idempotency_key());
+        assert_ne!(
+            patient_event.idempotency_key(),
+            care_team_event.idempotency_key()
+        );
     }
 }

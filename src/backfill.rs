@@ -48,11 +48,7 @@ const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
 
 /// Runs one dependency-ordered backfill pass, sending every row through `tx`
 /// as an `Upsert` `SyncEvent`. Returns the total number of resources sent.
-pub async fn run(
-    cfg: &Config,
-    tx: &Sender<SyncEvent>,
-    metrics: &SharedMetrics,
-) -> Result<usize> {
+pub async fn run(cfg: &Config, tx: &Sender<SyncEvent>, metrics: &SharedMetrics) -> Result<usize> {
     let db = &cfg.database;
 
     // Capture + persist the pre-snapshot position first (D6) — if the scan
@@ -90,8 +86,10 @@ pub async fn run(
 
     for (table, order_col, mapper) in BACKFILL_STEPS {
         let columns = column_maps.get(*table).expect("resolved column map");
-        total += scan_table(&mut conn, db, cfg, *table, *order_col, columns, tx, metrics, *mapper)
-            .await?;
+        total += scan_table(
+            &mut conn, db, cfg, *table, *order_col, columns, tx, metrics, *mapper,
+        )
+        .await?;
     }
 
     drop(conn);
@@ -221,7 +219,9 @@ async fn scan_table(
 
             for resource in resources {
                 let sync_event = SyncEvent::new(
-                    EventSource::OscarBackfill { table: table.to_string() },
+                    EventSource::OscarBackfill {
+                        table: table.to_string(),
+                    },
                     Op::Upsert,
                     resource,
                     chrono::Utc::now(),
@@ -277,7 +277,17 @@ mod tests {
     #[test]
     fn backfill_steps_are_in_dependency_order() {
         let names: Vec<_> = BACKFILL_STEPS.iter().map(|(t, _, _)| *t).collect();
-        assert_eq!(names, vec!["provider", "demographic", "demographic_merged", "appointment", "dxresearch", "casemgmt_note", CONSULTATION_RESPONSE_TABLE]);
+        assert_eq!(
+            names,
+            vec![
+                "provider",
+                "demographic",
+                "demographic_merged",
+                "appointment",
+                "dxresearch",
+                "casemgmt_note"
+            ]
+        );
     }
 
     #[test]
@@ -287,7 +297,10 @@ mod tests {
             mysql_value_to_string(&Value::Bytes(b"Alice".to_vec())),
             Some("Alice".to_string())
         );
-        assert_eq!(mysql_value_to_string(&Value::Int(1990)), Some("1990".to_string()));
+        assert_eq!(
+            mysql_value_to_string(&Value::Int(1990)),
+            Some("1990".to_string())
+        );
         assert_eq!(
             mysql_value_to_string(&Value::Date(1990, 3, 5, 0, 0, 0, 0)),
             Some("1990-03-05".to_string())

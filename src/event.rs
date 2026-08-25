@@ -131,7 +131,12 @@ impl SyncEvent {
     /// `resource_type` is included because a single Oscar row (e.g.
     /// `casemgmt_note`) can produce multiple FHIR resource types keyed on the
     /// same natural id.
-    pub fn new(source: Source, op: Op, payload: DomainResource, occurred_at: DateTime<Utc>) -> Self {
+    pub fn new(
+        source: Source,
+        op: Op,
+        payload: DomainResource,
+        occurred_at: DateTime<Utc>,
+    ) -> Self {
         let resource_type = payload.resource_type();
         let source_id = payload.source_id();
         let rt = resource_type.as_str();

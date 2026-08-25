@@ -91,7 +91,10 @@ pub async fn run(cfg: Config, tx: Sender<SyncEvent>, metrics: SharedMetrics) -> 
 
     let (mut current_filename, start_position) = resolve_start_position(&cfg).await?;
 
-    let url = format!("mysql://{}:{}@{}:{}", db.user, db.password, db.host, db.port);
+    let url = format!(
+        "mysql://{}:{}@{}:{}",
+        db.user, db.password, db.host, db.port
+    );
 
     let mut client = BinlogClient::new(
         &url,
@@ -380,7 +383,9 @@ async fn emit_row(
 
     for resource in resources {
         let sync_event = SyncEvent::new(
-            EventSource::OscarBinlog { table: table.to_string() },
+            EventSource::OscarBinlog {
+                table: table.to_string(),
+            },
             sync_op,
             resource,
             chrono::Utc::now(),
@@ -548,10 +553,22 @@ mod tests {
             },
         );
 
-        assert_eq!(is_target_table(&tables, 42, "oscar").as_deref(), Some("demographic"));
-        assert_eq!(is_target_table(&tables, 43, "oscar").as_deref(), Some("demographic_merged"));
-        assert_eq!(is_target_table(&tables, 44, "oscar").as_deref(), Some("provider"));
-        assert_eq!(is_target_table(&tables, 45, "oscar").as_deref(), Some("appointment"));
+        assert_eq!(
+            is_target_table(&tables, 42, "oscar").as_deref(),
+            Some("demographic")
+        );
+        assert_eq!(
+            is_target_table(&tables, 43, "oscar").as_deref(),
+            Some("demographic_merged")
+        );
+        assert_eq!(
+            is_target_table(&tables, 44, "oscar").as_deref(),
+            Some("provider")
+        );
+        assert_eq!(
+            is_target_table(&tables, 45, "oscar").as_deref(),
+            Some("appointment")
+        );
         assert!(is_target_table(&tables, 42, "other_schema").is_none());
         assert!(is_target_table(&tables, 999, "oscar").is_none()); // unknown table_id (F2)
     }

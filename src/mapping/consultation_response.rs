@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use mysql_async::prelude::*;
 use mysql_async::Row;
-use tracing::{warn};
+use tracing::warn;
 
 use crate::config::DatabaseConfig;
 use crate::domain::diagnostic_report::DomainDiagnosticReport;
@@ -37,16 +37,22 @@ pub async fn row_to_domain_diagnostic_report(
     columns: &ColumnMap,
     db: &DatabaseConfig,
 ) -> Result<Option<DomainDiagnosticReport>> {
-    let response_id = lookup_any(change, columns, &["responseId", "response_id"]).map(|s| s.to_string());
-    let demographic_no = lookup_any(change, columns, &["demographicNo", "demographic_no"]).map(|s| s.to_string());
-    let referral_date = lookup_any(change, columns, &["referralDate", "referral_date"]).map(|s| s.to_string());
-    let provider_no = syncable_provider(lookup_any(change, columns, &["providerNo", "provider_no"]));
-    let response_date = lookup_any(change, columns, &["responseDate", "response_date"]).map(|s| s.to_string());
+    let response_id =
+        lookup_any(change, columns, &["responseId", "response_id"]).map(|s| s.to_string());
+    let demographic_no =
+        lookup_any(change, columns, &["demographicNo", "demographic_no"]).map(|s| s.to_string());
+    let referral_date =
+        lookup_any(change, columns, &["referralDate", "referral_date"]).map(|s| s.to_string());
+    let provider_no =
+        syncable_provider(lookup_any(change, columns, &["providerNo", "provider_no"]));
+    let response_date =
+        lookup_any(change, columns, &["responseDate", "response_date"]).map(|s| s.to_string());
     let status = lookup_any(change, columns, &["status"]).map(|s| s.trim().to_string());
     let examination = lookup_any(change, columns, &["examination"]).map(|s| s.to_string());
     let impression = lookup_any(change, columns, &["impression"]).map(|s| s.to_string());
     let plan = lookup_any(change, columns, &["plan"]).map(|s| s.to_string());
-    let referral_reason = lookup_any(change, columns, &["referralReason", "referral_reason"]).map(|s| s.to_string());
+    let referral_reason =
+        lookup_any(change, columns, &["referralReason", "referral_reason"]).map(|s| s.to_string());
 
     let response_id = match response_id {
         Some(id) => id,
@@ -171,8 +177,7 @@ async fn resolve_based_on(
         return Ok(None);
     }
 
-    let fhir_service_request_id: Option<String> =
-        ext_rows.first().and_then(|r| r.get(0));
+    let fhir_service_request_id: Option<String> = ext_rows.first().and_then(|r| r.get(0));
 
     match fhir_service_request_id.as_deref().map(str::trim) {
         Some(id) if !id.is_empty() => Ok(Some(format!("ServiceRequest/{id}"))),

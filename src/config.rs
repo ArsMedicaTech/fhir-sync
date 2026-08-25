@@ -615,7 +615,8 @@ fn default_link_conflict_policy() -> ConflictPolicy {
     ConflictPolicy::DeadLetter
 }
 
-const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] = &["Patient", "Practitioner", "Appointment", "ServiceRequest"];
+const KNOWN_DISPATCH_RESOURCE_TYPES: &[&str] =
+    &["Patient", "Practitioner", "Appointment", "ServiceRequest"];
 const KNOWN_DISPATCH_OPS: &[&str] = &["upsert", "delete"];
 
 #[derive(Debug, Clone, Deserialize)]
@@ -693,8 +694,13 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
             continue;
         }
 
-        let url = url::Url::parse(&consumer.url)
-            .map_err(|e| anyhow::anyhow!("dispatch consumer '{}' url '{}' is invalid: {e}", consumer.name, consumer.url))?;
+        let url = url::Url::parse(&consumer.url).map_err(|e| {
+            anyhow::anyhow!(
+                "dispatch consumer '{}' url '{}' is invalid: {e}",
+                consumer.name,
+                consumer.url
+            )
+        })?;
         if url.scheme() != "https"
             && !(url.scheme() == "http"
                 && matches!(url.host_str(), Some("localhost") | Some("127.0.0.1")))
@@ -707,7 +713,10 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
         }
 
         if consumer.secret_env.trim().is_empty() {
-            anyhow::bail!("dispatch consumer '{}' has an empty secret_env", consumer.name);
+            anyhow::bail!(
+                "dispatch consumer '{}' has an empty secret_env",
+                consumer.name
+            );
         }
         if std::env::var(&consumer.secret_env).is_err() {
             anyhow::bail!(
@@ -718,7 +727,10 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
         }
 
         if consumer.resource_types.is_empty() {
-            anyhow::bail!("dispatch consumer '{}' has an empty resource_types list", consumer.name);
+            anyhow::bail!(
+                "dispatch consumer '{}' has an empty resource_types list",
+                consumer.name
+            );
         }
         for rt in &consumer.resource_types {
             if !KNOWN_DISPATCH_RESOURCE_TYPES
@@ -734,11 +746,21 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
         }
 
         if consumer.ops.is_empty() {
-            anyhow::bail!("dispatch consumer '{}' has an empty ops list", consumer.name);
+            anyhow::bail!(
+                "dispatch consumer '{}' has an empty ops list",
+                consumer.name
+            );
         }
         for op in &consumer.ops {
-            if !KNOWN_DISPATCH_OPS.iter().any(|k| k.eq_ignore_ascii_case(op)) {
-                anyhow::bail!("dispatch consumer '{}' has unknown op '{}'", consumer.name, op);
+            if !KNOWN_DISPATCH_OPS
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case(op))
+            {
+                anyhow::bail!(
+                    "dispatch consumer '{}' has unknown op '{}'",
+                    consumer.name,
+                    op
+                );
             }
         }
     }
@@ -749,7 +771,10 @@ pub fn validate_dispatch(cfg: &DispatchConfig) -> anyhow::Result<()> {
 /// Validates the replication configuration (node references, duplicates,
 /// federate requirements, forbidden resource types, observe-only rules,
 /// OAuth credentials). Fatal on error.
-pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) -> anyhow::Result<()> {
+pub fn validate_replication(
+    cfg: &ReplicationConfig,
+    dispatch: &DispatchConfig,
+) -> anyhow::Result<()> {
     if !cfg.enabled {
         return Ok(());
     }
@@ -783,35 +808,60 @@ pub fn validate_replication(cfg: &ReplicationConfig, dispatch: &DispatchConfig) 
             anyhow::bail!("replication link name '{}' is duplicated", link.name);
         }
         if !names.contains(&link.source) {
-            anyhow::bail!("replication link '{}' references unknown source node '{}'", link.name, link.source);
+            anyhow::bail!(
+                "replication link '{}' references unknown source node '{}'",
+                link.name,
+                link.source
+            );
         }
         if let Some(target) = &link.target {
             if !names.contains(target) {
-                anyhow::bail!("replication link '{}' references unknown target node '{}'", link.name, target);
+                anyhow::bail!(
+                    "replication link '{}' references unknown target node '{}'",
+                    link.name,
+                    target
+                );
             }
         }
-        if matches!(link.mode, ReplicationMode::Federate) && link.federate_identifier_system.is_none() {
-            anyhow::bail!("replication link '{}' uses federate mode but has no federate_identifier_system", link.name);
+        if matches!(link.mode, ReplicationMode::Federate)
+            && link.federate_identifier_system.is_none()
+        {
+            anyhow::bail!(
+                "replication link '{}' uses federate mode but has no federate_identifier_system",
+                link.name
+            );
         }
         if link
             .resources
             .iter()
             .any(|r| r.eq_ignore_ascii_case("Provenance") || r.eq_ignore_ascii_case("AuditEvent"))
         {
-            anyhow::bail!("replication link '{}' may not include Provenance or AuditEvent in resources", link.name);
+            anyhow::bail!(
+                "replication link '{}' may not include Provenance or AuditEvent in resources",
+                link.name
+            );
         }
 
         if link.target.is_none() {
             if link.resources.is_empty() {
-                anyhow::bail!("replication link '{}' is observe-only but has no resources", link.name);
+                anyhow::bail!(
+                    "replication link '{}' is observe-only but has no resources",
+                    link.name
+                );
             }
 
             if !dispatch.enabled {
-                anyhow::bail!("replication link '{}' is observe-only but dispatch is not enabled", link.name);
+                anyhow::bail!(
+                    "replication link '{}' is observe-only but dispatch is not enabled",
+                    link.name
+                );
             }
 
             let has_consumer = dispatch.consumers.iter().any(|c| {
-                c.enabled && c.resource_types.iter().any(|rt| link.resources.iter().any(|lr| lr.eq_ignore_ascii_case(rt)))
+                c.enabled
+                    && c.resource_types
+                        .iter()
+                        .any(|rt| link.resources.iter().any(|lr| lr.eq_ignore_ascii_case(rt)))
             });
             if !has_consumer {
                 anyhow::bail!(
@@ -831,11 +881,9 @@ pub fn validate_oscar(cfg: &Config) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let tz = cfg
-        .oscar
-        .timezone
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("[oscar] timezone is required when oscar_enabled is true"))?;
+    let tz = cfg.oscar.timezone.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("[oscar] timezone is required when oscar_enabled is true")
+    })?;
 
     if tz.parse::<chrono_tz::Tz>().is_err() {
         anyhow::bail!("[oscar] timezone '{tz}' is not a valid IANA timezone");
@@ -880,13 +928,31 @@ pub fn validate_writeback(cfg: &Config) -> anyhow::Result<()> {
         anyhow::bail!("[oscar] timezone '{tz}' is not a valid IANA timezone");
     }
 
-    if cfg.oscar.default_mrp_provider_no.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+    if cfg
+        .oscar
+        .default_mrp_provider_no
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
         anyhow::bail!("[writeback] requires [oscar].default_mrp_provider_no");
     }
-    if cfg.oscar.default_appointment_location.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+    if cfg
+        .oscar
+        .default_appointment_location
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
         anyhow::bail!("[writeback] requires [oscar].default_appointment_location");
     }
-    if cfg.oscar.default_appointment_type.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+    if cfg
+        .oscar
+        .default_appointment_type
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
         anyhow::bail!("[writeback] requires [oscar].default_appointment_type");
     }
 
@@ -925,13 +991,16 @@ pub fn validate_writeback(cfg: &Config) -> anyhow::Result<()> {
         }
     }
 
-    const VALID_RESOURCE_TYPES: &[&str] =
-        &["Patient", "Appointment", "Encounter", "DocumentReference", "ServiceRequest"];
+    const VALID_RESOURCE_TYPES: &[&str] = &[
+        "Patient",
+        "Appointment",
+        "Encounter",
+        "DocumentReference",
+        "ServiceRequest",
+    ];
     for r in &cfg.writeback.hapi_resource_types {
         if !VALID_RESOURCE_TYPES.contains(&r.as_str()) {
-            anyhow::bail!(
-                "[writeback].hapi_resource_types contains unknown resource type '{r}'"
-            );
+            anyhow::bail!("[writeback].hapi_resource_types contains unknown resource type '{r}'");
         }
     }
 
@@ -1007,11 +1076,7 @@ mod tests {
             retry_max_attempts: default_retry_max_attempts(),
             retry_base_ms: default_retry_base_ms(),
             timeout_ms: default_dispatch_timeout_ms(),
-            consumers: vec![make_consumer(
-                "a",
-                "http://example.invalid/hook",
-                "D_A",
-            )],
+            consumers: vec![make_consumer("a", "http://example.invalid/hook", "D_A")],
         };
         let err = validate_dispatch(&cfg).unwrap_err().to_string();
         assert!(err.contains("must use https"));
@@ -1041,7 +1106,11 @@ mod tests {
             retry_max_attempts: default_retry_max_attempts(),
             retry_base_ms: default_retry_base_ms(),
             timeout_ms: default_dispatch_timeout_ms(),
-            consumers: vec![make_consumer("a", "https://example.invalid/hook", "D_MISSING")],
+            consumers: vec![make_consumer(
+                "a",
+                "https://example.invalid/hook",
+                "D_MISSING",
+            )],
         };
         let err = validate_dispatch(&cfg).unwrap_err().to_string();
         assert!(err.contains("not set"));
