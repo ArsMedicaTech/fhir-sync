@@ -6,5 +6,6 @@ pub mod document_reference;
 pub mod encounter;
 pub mod patient;
 pub mod practitioner;
+pub mod referral_task;
 pub mod resource;
 pub mod service_request;
