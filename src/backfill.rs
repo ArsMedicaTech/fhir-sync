@@ -24,7 +24,6 @@ use crate::event::{Op, Source as EventSource, SyncEvent};
 use crate::mapping::appointment::row_to_domain_appointment;
 use crate::mapping::care_team::row_to_domain_care_team;
 use crate::mapping::casemgmt_note::row_to_casemgmt_note_resources;
-use crate::mapping::consultation_response::row_to_domain_diagnostic_report;
 use crate::mapping::demographic::{row_to_domain_patient, row_to_merged_patient, ColumnMap};
 use crate::mapping::dxresearch::row_to_domain_condition;
 use crate::mapping::provider::row_to_domain_practitioner;
@@ -38,7 +37,6 @@ const BATCH_SIZE: u64 = 500;
 /// conditional references (appointment, encounter, document reference) are
 /// scanned last so their targets have already been sent to the sink.
 type Mapper = fn(&RowChange, &ColumnMap, &Config) -> Vec<DomainResource>;
-const CONSULTATION_RESPONSE_TABLE: &str = "consultationResponse";
 const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
     ("provider", "provider_no", practitioner_mapper),
     ("demographic", "demographic_no", patient_mapper),
@@ -46,7 +44,6 @@ const BACKFILL_STEPS: &[(&str, &str, Mapper)] = &[
     ("appointment", "appointment_no", appointment_mapper),
     ("dxresearch", "dxresearch_no", dxresearch_mapper),
     ("casemgmt_note", "note_id", casemgmt_note_mapper),
-    (CONSULTATION_RESPONSE_TABLE, "responseId", consultation_response_mapper),
 ];
 
 /// Runs one dependency-ordered backfill pass, sending every row through `tx`
@@ -170,15 +167,6 @@ fn casemgmt_note_mapper(
     row_to_casemgmt_note_resources(change, columns, None)
 }
 
-fn consultation_response_mapper(
-    _change: &RowChange,
-    _columns: &ColumnMap,
-    _cfg: &Config,
-) -> Vec<DomainResource> {
-    // Backfill uses the async `scan_consultation_response_table` path instead.
-    Vec::new()
-}
-
 async fn scan_table(
     conn: &mut Conn,
     db: &DatabaseConfig,
@@ -190,10 +178,6 @@ async fn scan_table(
     metrics: &SharedMetrics,
     mapper: fn(&RowChange, &ColumnMap, &Config) -> Vec<DomainResource>,
 ) -> Result<usize> {
-    if table == CONSULTATION_RESPONSE_TABLE {
-        return scan_consultation_response_table(conn, db, cfg, table, order_col, columns, tx, metrics).await;
-    }
-
     let mut offset: u64 = 0;
     let mut total = 0usize;
 
@@ -249,79 +233,6 @@ async fn scan_table(
                     return Ok(total);
                 }
                 total += 1;
-            }
-        }
-
-        offset += batch_len;
-    }
-
-    Ok(total)
-}
-
-async fn scan_consultation_response_table(
-    conn: &mut Conn,
-    db: &DatabaseConfig,
-    _cfg: &Config,
-    table: &str,
-    order_col: &str,
-    columns: &ColumnMap,
-    tx: &Sender<SyncEvent>,
-    metrics: &SharedMetrics,
-) -> Result<usize> {
-    let mut offset: u64 = 0;
-    let mut total = 0usize;
-
-    loop {
-        let sql = format!(
-            "SELECT * FROM {table} ORDER BY {order_col} LIMIT {BATCH_SIZE} OFFSET {offset}"
-        );
-        let rows: Vec<Row> = conn
-            .query(sql)
-            .await
-            .with_context(|| format!("scanning {table} batch"))?;
-
-        if rows.is_empty() {
-            break;
-        }
-
-        let batch_len = rows.len() as u64;
-
-        for row in rows {
-            let after: Vec<Option<String>> = row
-                .unwrap()
-                .into_iter()
-                .map(|v| mysql_value_to_string(&v))
-                .collect();
-
-            let change = RowChange {
-                schema: db.schema.clone(),
-                table: table.to_string(),
-                op: RowOp::Insert,
-                after,
-                position: SourcePosition::FilePos {
-                    file: String::new(),
-                    pos: 0,
-                },
-            };
-
-            match row_to_domain_diagnostic_report(&change, columns, db).await {
-                Ok(Some(report)) => {
-                    let sync_event = SyncEvent::new(
-                        EventSource::OscarBackfill { table: table.to_string() },
-                        Op::Upsert,
-                        DomainResource::DiagnosticReport(report),
-                        chrono::Utc::now(),
-                    );
-
-                    metrics.inc_received();
-                    if tx.send(sync_event).await.is_err() {
-                        warn!("backfill: sink channel closed mid-scan, stopping early");
-                        return Ok(total);
-                    }
-                    total += 1;
-                }
-                Ok(None) => {}
-                Err(e) => warn!("backfill: failed to map consultationResponse row: {e:?}"),
             }
         }
 
