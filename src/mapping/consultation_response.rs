@@ -1,3 +1,5 @@
+//! Legacy consultationResponse mapping retained unwired per
+
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
